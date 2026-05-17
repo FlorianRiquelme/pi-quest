@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('node:fs', async () => {
   const { fs } = await import('memfs');
-  return { default: fs, promises: fs.promises, ...fs };
+  return { default: fs, ...fs };
 });
 
 vi.mock('node:os', () => ({ tmpdir: () => '/tmp' }));

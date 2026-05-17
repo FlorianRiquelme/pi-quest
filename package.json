@@ -1,0 +1,32 @@
+{
+  "name": "pi-quest",
+  "version": "0.1.0",
+  "description": "Quest execution engine for pi — turns shaped handoffs into implemented, verified, and user-tested repository changes.",
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "files": [
+    "agents",
+    "extensions",
+    "skills",
+    "lib.ts",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "memfs": "^4.9.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "pi": {
+    "extensions": ["./extensions/index.ts"],
+    "skills": ["./skills"]
+  }
+}

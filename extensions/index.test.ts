@@ -192,6 +192,68 @@ describe('piQuestExtension', () => {
       expect(result.content[0].text).toContain('Invalid transition');
     });
 
+    it('rejects verification-ready without VERIFICATION.md', async () => {
+      const workflow = {
+        id: 'test-quest',
+        title: 'Test Quest',
+        status: 'verification',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'HANDOFF.md', verification: 'VERIFICATION.md' },
+      };
+
+      vol.fromJSON({
+        '/project/.pi/quests/test-quest/workflow.json': JSON.stringify(workflow),
+      });
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_write_workflow'];
+
+      const result = await tool.execute(
+        'tc-1',
+        { questId: 'test-quest', action: 'set-status', status: 'verification-ready' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Gate check failed');
+      expect(result.details.missingArtifact).toContain('VERIFICATION.md');
+    });
+
+    it('allows verification-ready when VERIFICATION.md exists', async () => {
+      const workflow = {
+        id: 'test-quest',
+        title: 'Test Quest',
+        status: 'verification',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'HANDOFF.md', verification: 'VERIFICATION.md' },
+      };
+
+      vol.fromJSON({
+        '/project/.pi/quests/test-quest/workflow.json': JSON.stringify(workflow),
+        '/project/.pi/quests/test-quest/VERIFICATION.md': '# Verification\n\n## Verdict\npass',
+      });
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_write_workflow'];
+
+      const result = await tool.execute(
+        'tc-1',
+        { questId: 'test-quest', action: 'set-status', status: 'verification-ready' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+
+      expect(result.isError).toBeFalsy();
+      expect(result.details.workflow.status).toBe('verification-ready');
+    });
+
     it('allows invalid transition with force=true', async () => {
       const workflow = {
         id: 'test-quest',

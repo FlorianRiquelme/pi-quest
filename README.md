@@ -75,15 +75,15 @@ These tools are available to the agent during quest execution:
 | `quest_run_work_item` | Start an implementation subagent for one work item in the background; returns a run ID immediately |
 | `quest_work_item_status` | Check background run status, report path, and report tail |
 | `quest_rescue` | Spawn a rescue subagent for a blocked work item |
-| `quest_write_workflow` | Read or update `workflow.json` with transition safety |
+| `quest_write_workflow` | Read or update `workflow.json` with transition safety and verification artifact gates |
 | `quest_telemetry_event` | Record a telemetry event |
 
 ## Status Model
 
 ```
-intake → recon-ready → reviewing → resolved → planned → executing → verification-ready → uat-ready → completed
-              ↓            ↓            ↓           ↓           ↓                ↓               ↓
-         needs-resolution ← ← ← ← ← ← ← ← ← ← ← ← ← ← blocked ← uat-failed ← ← ← ← ← ← ← ←
+intake → recon-ready → reviewing → resolved → planned → executing → verification → verification-ready → uat-ready → completed
+              ↓            ↓            ↓           ↓           ↓           ↓                  ↓               ↓
+         needs-resolution ← ← ← ← ← ← ← ← ← ← ← ← ← ← blocked ← ← ← ← ← ← ← uat-failed ← ← ← ← ← ← ← ←
 ```
 
 ## Configuration

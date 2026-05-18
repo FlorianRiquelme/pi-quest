@@ -18,8 +18,10 @@ describe('isValidTransition', () => {
     expect(isValidTransition('resolved', 'planned')).toBe(true);
     expect(isValidTransition('planned', 'executing')).toBe(true);
     expect(isValidTransition('executing', 'blocked')).toBe(true);
-    expect(isValidTransition('executing', 'verification-ready')).toBe(true);
+    expect(isValidTransition('executing', 'verification')).toBe(true);
     expect(isValidTransition('blocked', 'executing')).toBe(true);
+    expect(isValidTransition('verification', 'verification-ready')).toBe(true);
+    expect(isValidTransition('verification', 'blocked')).toBe(true);
     expect(isValidTransition('verification-ready', 'uat-ready')).toBe(true);
     expect(isValidTransition('uat-ready', 'completed')).toBe(true);
     expect(isValidTransition('uat-ready', 'uat-failed')).toBe(true);
@@ -42,7 +44,7 @@ describe('isValidTransition', () => {
     expect(isValidTransition('blocked', 'reviewing')).toBe(true);
     expect(isValidTransition('blocked', 'resolved')).toBe(true);
     expect(isValidTransition('blocked', 'planned')).toBe(true);
-    expect(isValidTransition('blocked', 'verification-ready')).toBe(true);
+    expect(isValidTransition('blocked', 'verification')).toBe(true);
   });
 });
 

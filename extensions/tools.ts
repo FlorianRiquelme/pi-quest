@@ -365,6 +365,24 @@ export async function executeQuestWriteWorkflow(
 				details: { currentStatus: workflow.status, requestedStatus: params.status },
 			};
 		}
+
+		// Harness-level gate: verification-ready requires VERIFICATION.md to exist
+		if (params.status === "verification-ready") {
+			const verificationPath = path.join(questDir, workflow.artifacts.verification ?? "VERIFICATION.md");
+			if (!params.force && !fs.existsSync(verificationPath)) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Gate check failed: ${workflow.artifacts.verification ?? "VERIFICATION.md"} not found. Run the Verification Agent before marking verification-ready, or use force=true to override.`,
+						},
+					],
+					isError: true,
+					details: { currentStatus: workflow.status, requestedStatus: params.status, missingArtifact: verificationPath },
+				};
+			}
+		}
+
 		workflow.status = params.status as QuestStatus;
 		workflow.updatedAt = new Date().toISOString();
 		saveQuestWorkflow(questDir, workflow);

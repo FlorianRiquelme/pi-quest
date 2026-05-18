@@ -109,6 +109,16 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 		);
 		return;
 	}
+	if (!force && newStatus === "verification-ready") {
+		const verificationPath = path.join(questDir, workflow.artifacts.verification ?? "VERIFICATION.md");
+		if (!fs.existsSync(verificationPath)) {
+			ctx.ui.notify(
+				`Gate check failed: ${workflow.artifacts.verification ?? "VERIFICATION.md"} not found. Run the Verification Agent before marking verification-ready, or use --force to override.`,
+				"error",
+			);
+			return;
+		}
+	}
 	workflow.status = newStatus as QuestStatus;
 	workflow.updatedAt = new Date().toISOString();
 	saveQuestWorkflow(questDir, workflow);

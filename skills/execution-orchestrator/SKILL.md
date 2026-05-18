@@ -41,7 +41,7 @@ You also have access to the `quest_rescue` tool for blocked implementation agent
    a. Capture the work item state, relevant errors, and diff summary.
    b. Call `quest_rescue` with this context.
    c. Apply the rescue recommendation (continue / revert / pause / ask user).
-4. After all batches complete, update the quest workflow status to `verification-ready`.
+4. After all batches complete, update the quest workflow status to `verification` and hand off to the Quest Verification Agent. Never set `verification-ready` directly; the harness rejects that transition unless `VERIFICATION.md` already exists. The Verification Agent writes `VERIFICATION.md` and then sets `verification-ready` (or `blocked`).
 
 ## Batch Strong Review Rubric (for "auto")
 
@@ -57,7 +57,7 @@ Trigger strong batch verification when ANY of the following is true:
 
 - Reports in `reports/<work-item-id>.md`
 - Telemetry in `telemetry/events.jsonl`
-- Updated `workflow.json` with status
+- Updated `workflow.json` with status `verification` after implementation batches complete
 
 ## Rules
 - Do not add new parallelism or expand scope without GPT-5.5/user approval.

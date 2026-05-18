@@ -125,6 +125,20 @@ describe('commands', () => {
       expect(notifyCalls[0].level).toBe('error');
       expect(notifyCalls[0].msg).toContain('Invalid status transition');
     });
+
+    it('rejects verification-ready without VERIFICATION.md', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1', title: 'Q', status: 'verification',
+          createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+          source: {}, artifacts: { handoff: 'H.md', verification: 'VERIFICATION.md' },
+        }),
+      });
+      const ctx = mockCtx('/project');
+      await cmdSetStatus(ctx, ['q1', 'verification-ready']);
+      expect(notifyCalls[0].level).toBe('error');
+      expect(notifyCalls[0].msg).toContain('Gate check failed');
+    });
   });
 
   describe('cmdConfig', () => {

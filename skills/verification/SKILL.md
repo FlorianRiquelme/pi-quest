@@ -17,12 +17,13 @@ You are a verification agent for a pi Quest. Your job is to compare completed wo
 
 ## Task
 
+0. Confirm the quest workflow is in `verification` status unless the user explicitly requested a forced/backfill verification.
 1. Read the resolved handoff and plan.
 2. Read the work item reports.
 3. Sample the actual repository changes (diff, key modified files).
 4. Run relevant verification commands (tests, type checks, lint).
 5. Compare results against acceptance criteria.
-6. Write `VERIFICATION.md`.
+6. Write `VERIFICATION.md` before changing workflow status.
 
 ## VERIFICATION.md structure
 
@@ -60,6 +61,7 @@ If needs-fixes or blocked, what should happen next.
 - **blocked**: Fundamental mismatch, plan needs replanning, or a prerequisite is missing. Recommend returning to `reviewing` or `planned`.
 
 ## Rules
+- Never update to `verification-ready` before `VERIFICATION.md` exists; the harness enforces this gate.
 - After writing VERIFICATION.md, update the quest workflow status:
   - `pass` → `verification-ready`
   - `needs-fixes` → `verification-ready` (with fix plan)

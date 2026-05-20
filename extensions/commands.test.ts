@@ -278,6 +278,74 @@ describe('commands', () => {
         expect(errorNotify!.msg).toContain('missing_sign_off');
       });
 
+      it('blocks when compiler_diagnostics contains unaddressed_requirement error (M2-2)', async () => {
+        const plan =
+          '---\n' +
+          'blast_radius:\n' +
+          '  in_scope:\n' +
+          '    - src/x.ts\n' +
+          'pre_mortem:\n' +
+          '  most_likely_failure: oops\n' +
+          'compiler_diagnostics:\n' +
+          '  - severity: error\n' +
+          '    rule: unaddressed_requirement\n' +
+          '    message: "R2 not addressed by any work-item"\n' +
+          'launch_review:\n' +
+          '  signed_off_at: "2026-05-20T11:30:00Z"\n' +
+          '  signed_off_by: user\n' +
+          '---\n';
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+          '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': plan,
+        });
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+        const errorNotify = notifyCalls.find((c) => c.level === 'error');
+        expect(errorNotify!.msg).toContain('compiler_error');
+        expect(errorNotify!.msg).toContain('unaddressed_requirement');
+        const persisted = JSON.parse(
+          vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+        );
+        expect(persisted.status).toBe('launch-review');
+      });
+
+      it('passes when only warnings are present (M2-2: warnings don\'t block)', async () => {
+        const plan =
+          '---\n' +
+          'blast_radius:\n' +
+          '  in_scope:\n' +
+          '    - src/x.ts\n' +
+          'pre_mortem:\n' +
+          '  most_likely_failure: oops\n' +
+          'compiler_diagnostics:\n' +
+          '  - severity: warning\n' +
+          '    rule: empty_claims\n' +
+          '    message: "WI-1 has no claims"\n' +
+          '    work_item: WI-1\n' +
+          'launch_review:\n' +
+          '  signed_off_at: "2026-05-20T11:30:00Z"\n' +
+          '  signed_off_by: user\n' +
+          '---\n';
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+          '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': plan,
+        });
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+        const persisted = JSON.parse(
+          vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+        );
+        expect(persisted.status).toBe('executing');
+
+        const jsonl = vol.readFileSync(
+          '/project/.pi/quests/q1/telemetry/events.jsonl',
+          'utf-8',
+        ) as string;
+        const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+        const gateEvent = events.find((e) => e.event === 'launch_gate');
+        expect(gateEvent.outcome).toBe('passed');
+      });
+
       it('--force bypasses gate and emits force_passed', async () => {
         // No plan file at all — gate would normally block.
         vol.fromJSON({

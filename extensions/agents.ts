@@ -177,6 +177,32 @@ export async function runSubagent(options: {
 
 export const activeRuns = new Map<string, BackgroundRunSummary>();
 
+/**
+ * In-memory map of `runId → epoch-ms-of-last-progress-beat`. Updated by both
+ * the explicit `quest_progress_beat` tool (via {@link recordSemanticBeat}) and
+ * by {@link emitSyntheticLivenessBeats}. Read by the synthetic liveness loop
+ * to decide whether the 60s window has elapsed since the last beat.
+ *
+ * Exported only for tests.
+ */
+export const __lastBeatAtForTests = new Map<string, number>();
+
+/** Rate-limit window for explicit progress beats. */
+export const PROGRESS_BEAT_RATE_LIMIT_MS = 15_000;
+
+/** Synthetic liveness interval — every {@link LIVENESS_BEAT_INTERVAL_MS}, the supervisor checks each running run. */
+export const LIVENESS_BEAT_INTERVAL_MS = 60_000;
+
+/**
+ * Record that a semantic `progress_beat` has been emitted for `runId` at `nowMs`.
+ *
+ * Updates the in-memory last-beat map so the synthetic liveness loop and the
+ * rate-limiter both see the new timestamp.
+ */
+export function recordSemanticBeat(runId: string, nowMs: number): void {
+	__lastBeatAtForTests.set(runId, nowMs);
+}
+
 export function writeRunSummary(summary: BackgroundRunSummary) {
 	writeJson(summary.statusPath, summary);
 }
@@ -280,12 +306,31 @@ export async function startSubagentRun(options: {
 	const reportPath = path.join(options.questDir, "reports", `${options.workItemId}.md`);
 	const startedAt = new Date().toISOString();
 	const invocation = getPiInvocation(args);
+	// Per ADR 009: subagents must survive parent exit. `detached: true` plus
+	// `child.unref()` (below) detaches the child from the parent's process
+	// group so closing pi doesn't SIGHUP all background runs.
+	//
+	// Per ADR 010 §3: inject PI_QUEST_* env vars so subagents can attribute
+	// their explicit `quest_progress_beat` / `quest_concession` tool calls
+	// without guessing. The tools also accept the IDs as explicit params
+	// (Approach B) — env vars exist so the agent's prompt can read them out
+	// of its own process environment.
 	const proc = spawn(invocation.command, invocation.args, {
 		cwd: options.cwd,
 		shell: false,
-		detached: false,
+		detached: true,
 		stdio: ["ignore", "pipe", "pipe"],
+		env: {
+			...process.env,
+			PI_QUEST_QUEST_ID: options.questId,
+			PI_QUEST_WORK_ITEM_ID: options.workItemId,
+			PI_QUEST_RUN_ID: runId,
+		},
 	});
+	// Detach from the parent's event loop — closing pi while detached runs
+	// continue will not block, and the parent's `process.exit()` doesn't wait
+	// on us. Re-attachment for reaping happens at the next pi startup.
+	proc.unref();
 
 	const summary: BackgroundRunSummary = {
 		runId,
@@ -355,4 +400,169 @@ export async function startSubagentRun(options: {
 	proc.on("error", () => finalize("failed", 1));
 
 	return summary;
+}
+
+/* ================================ Startup reaper (ADR 009) ================================ */
+
+/**
+ * Return `true` if `pid` is currently reachable, `false` if it isn't.
+ *
+ * Wraps `process.kill(pid, 0)` to translate the POSIX errno into a boolean:
+ *   - success → alive
+ *   - `ESRCH` → no such process → dead
+ *   - `EPERM` → process exists but we lack permission → treat as alive
+ *   - any other error → conservatively treat as alive (don't reap on bugs)
+ */
+function isPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === "ESRCH") return false;
+		return true;
+	}
+}
+
+/**
+ * Scan every quest's `runs/*.json` for `status: "running"` entries whose PID is
+ * no longer alive. Promote each to `"orphaned"`, write the summary back, and
+ * append a `run_orphaned` event to that quest's `telemetry/events.jsonl`.
+ *
+ * Per ADR 009: this is the startup reconciliation pass that recovers state the
+ * parent process lost when it died. Run once on extension `session_start`; the
+ * supervisor takes over polling for the rest of the session.
+ *
+ * Returns the list of run IDs that were reaped (for testing / observability).
+ */
+export function reapOrphanedRuns(cwd: string): string[] {
+	const reaped: string[] = [];
+	const questsDir = path.join(cwd, ".pi", "quests");
+	if (!fs.existsSync(questsDir)) return reaped;
+
+	const questIds = fs
+		.readdirSync(questsDir, { withFileTypes: true })
+		.filter((d) => d.isDirectory())
+		.map((d) => d.name);
+
+	for (const questId of questIds) {
+		const questDir = path.join(questsDir, questId);
+		const runsDir = path.join(questDir, "runs");
+		if (!fs.existsSync(runsDir)) continue;
+
+		for (const entry of fs.readdirSync(runsDir)) {
+			if (!entry.endsWith(".json")) continue;
+			const statusPath = path.join(runsDir, entry);
+			const summary = readJsonIfExists<BackgroundRunSummary>(statusPath);
+			if (!summary || summary.status !== "running") continue;
+			if (typeof summary.pid !== "number" || isPidAlive(summary.pid)) continue;
+
+			const completedAt = new Date().toISOString();
+			const updated: BackgroundRunSummary = {
+				...summary,
+				status: "orphaned",
+				completedAt,
+				updatedAt: completedAt,
+			};
+			writeRunSummary(updated);
+
+			const telemetryPath = path.join(questDir, "telemetry", "events.jsonl");
+			ensureDir(path.dirname(telemetryPath));
+			const event = validateEvent({
+				event: "run_orphaned",
+				timestamp: completedAt,
+				questId: summary.questId,
+				runId: summary.runId,
+				workItemId: summary.workItemId,
+				details: {
+					pid: summary.pid,
+					model: summary.model,
+					agentName: summary.agentName,
+				},
+			});
+			fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+
+			reaped.push(summary.runId);
+		}
+	}
+
+	return reaped;
+}
+
+/* ================================ Synthetic liveness loop (ADR 010 §3) ================================ */
+
+/**
+ * Walk the running runs (from `activeRuns` and `runs/*.json`) and, for each,
+ * emit a synthetic `progress_beat` with `phase: "alive"` when:
+ *   - the PID is still alive (`process.kill(pid, 0)` succeeds), AND
+ *   - no beat (semantic or synthetic) has been recorded in the last
+ *     {@link LIVENESS_BEAT_INTERVAL_MS}.
+ *
+ * Per ADR 010 §3 ("Hybrid emission"), the synthetic beat is the heartbeat
+ * floor that survives long shell commands; an explicit-beat silence with a
+ * live PID is itself a signal that Auto-Pause-on-Anomaly can detect later.
+ *
+ * `now` is injectable for tests. The default uses `Date.now()`.
+ */
+export function emitSyntheticLivenessBeats(options: {
+	cwd: string;
+	now?: () => number;
+}): void {
+	const now = options.now ?? (() => Date.now());
+	const nowMs = now();
+
+	const questsDir = path.join(options.cwd, ".pi", "quests");
+	if (!fs.existsSync(questsDir)) return;
+
+	const questIds = fs
+		.readdirSync(questsDir, { withFileTypes: true })
+		.filter((d) => d.isDirectory())
+		.map((d) => d.name);
+
+	for (const questId of questIds) {
+		const questDir = path.join(questsDir, questId);
+		const runsDir = path.join(questDir, "runs");
+		if (!fs.existsSync(runsDir)) continue;
+
+		for (const entry of fs.readdirSync(runsDir)) {
+			if (!entry.endsWith(".json")) continue;
+			const summary = readJsonIfExists<BackgroundRunSummary>(path.join(runsDir, entry));
+			if (!summary || summary.status !== "running") continue;
+			if (typeof summary.pid !== "number" || !isPidAlive(summary.pid)) continue;
+
+			const last = __lastBeatAtForTests.get(summary.runId);
+			if (last !== undefined && nowMs - last < LIVENESS_BEAT_INTERVAL_MS) continue;
+
+			const telemetryPath = path.join(questDir, "telemetry", "events.jsonl");
+			ensureDir(path.dirname(telemetryPath));
+			const event = validateEvent({
+				event: "progress_beat",
+				timestamp: new Date(nowMs).toISOString(),
+				questId: summary.questId,
+				runId: summary.runId,
+				phase: "alive",
+			});
+			fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+			__lastBeatAtForTests.set(summary.runId, nowMs);
+		}
+	}
+}
+
+/**
+ * Start the in-process supervisor: a 60s `setInterval` that calls
+ * {@link emitSyntheticLivenessBeats}.
+ *
+ * The returned handle is `unref`ed so it doesn't keep the parent process
+ * alive — pi can exit cleanly even with the interval armed.
+ */
+export function startLivenessSupervisor(cwd: string): NodeJS.Timeout {
+	const handle = setInterval(() => {
+		try {
+			emitSyntheticLivenessBeats({ cwd });
+		} catch {
+			/* never let the supervisor crash the host process */
+		}
+	}, LIVENESS_BEAT_INTERVAL_MS);
+	handle.unref?.();
+	return handle;
 }

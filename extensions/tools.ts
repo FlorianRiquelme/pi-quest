@@ -14,9 +14,12 @@ import { ensureDir } from "./fs-utils.js";
 import { questDirPath } from "./paths.js";
 import { loadQuestWorkflow, saveQuestWorkflow } from "./state.js";
 import {
+	__lastBeatAtForTests,
 	activeRuns,
 	compactRunLine,
 	listRunSummaries,
+	PROGRESS_BEAT_RATE_LIMIT_MS,
+	recordSemanticBeat,
 	runSubagent,
 	startSubagentRun,
 } from "./agents.js";
@@ -457,6 +460,150 @@ export async function executeQuestTelemetryEvent(
 
 	return {
 		content: [{ type: "text" as const, text: "Telemetry event recorded." }],
+		details: { event },
+	};
+}
+
+/* ================================ quest_progress_beat ================================ */
+
+/**
+ * Explicit semantic progress beat (ADR 010 §3).
+ *
+ * Approach B for env propagation: the tool takes `questId` + `runId` as
+ * required params. pi tool calls execute in the parent extension process, so
+ * the subagent's own `PI_QUEST_*` env vars don't reach the parent's
+ * `process.env`. The subagent reads its IDs from its own environment when
+ * constructing the tool call and passes them in. Env vars are injected on
+ * spawn (in `startSubagentRun`) for the subagent's prompt construction.
+ *
+ * Rate-limited to one beat per {@link PROGRESS_BEAT_RATE_LIMIT_MS} per runId.
+ * Beats inside the window return success but are a no-op (no append, no rate
+ * stamp update — the synthetic loop will fill the gap if needed).
+ */
+export interface QuestProgressBeatParams {
+	questId: string;
+	runId: string;
+	phase: string;
+	confidence?: number;
+	note?: string;
+}
+
+export async function executeQuestProgressBeat(
+	params: QuestProgressBeatParams,
+	ctx: ToolContext,
+) {
+	const questDir = questDirPath(ctx.cwd, params.questId);
+	if (!fs.existsSync(questDir)) {
+		return {
+			content: [{ type: "text" as const, text: `Quest '${params.questId}' not found.` }],
+			isError: true,
+			details: {},
+		};
+	}
+
+	const nowMs = Date.now();
+	const last = __lastBeatAtForTests.get(params.runId);
+	if (last !== undefined && nowMs - last < PROGRESS_BEAT_RATE_LIMIT_MS) {
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `Rate-limited: progress beat for run '${params.runId}' suppressed (last beat <${PROGRESS_BEAT_RATE_LIMIT_MS}ms ago).`,
+				},
+			],
+			details: { rateLimited: true, runId: params.runId },
+		};
+	}
+
+	const candidate: Record<string, unknown> = {
+		event: "progress_beat",
+		timestamp: new Date(nowMs).toISOString(),
+		questId: params.questId,
+		runId: params.runId,
+		phase: params.phase,
+	};
+	if (params.confidence !== undefined) candidate.confidence = params.confidence;
+	if (params.note !== undefined) candidate.note = params.note;
+
+	let event;
+	try {
+		event = validateEvent(candidate);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return {
+			content: [{ type: "text" as const, text: `Rejected progress beat: ${message}` }],
+			isError: true,
+			details: { rejected: candidate, reason: message },
+		};
+	}
+
+	const telemetryPath = path.join(questDir, "telemetry", "events.jsonl");
+	ensureDir(path.dirname(telemetryPath));
+	fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+	recordSemanticBeat(params.runId, nowMs);
+
+	return {
+		content: [{ type: "text" as const, text: "Progress beat recorded." }],
+		details: { event },
+	};
+}
+
+/* ================================ quest_concession ================================ */
+
+/**
+ * Explicit concession event (ADR 010 §3). Approach B same as
+ * `executeQuestProgressBeat`.
+ *
+ * Concessions are NOT rate-limited — every judgment call the agent makes
+ * without asking should land in the Concession Ledger.
+ */
+export interface QuestConcessionParams {
+	questId: string;
+	runId: string;
+	decision: string;
+	rationale: string;
+}
+
+export async function executeQuestConcession(
+	params: QuestConcessionParams,
+	ctx: ToolContext,
+) {
+	const questDir = questDirPath(ctx.cwd, params.questId);
+	if (!fs.existsSync(questDir)) {
+		return {
+			content: [{ type: "text" as const, text: `Quest '${params.questId}' not found.` }],
+			isError: true,
+			details: {},
+		};
+	}
+
+	const candidate = {
+		event: "concession" as const,
+		timestamp: new Date().toISOString(),
+		questId: params.questId,
+		runId: params.runId,
+		decision: params.decision,
+		rationale: params.rationale,
+	};
+
+	let event;
+	try {
+		event = validateEvent(candidate);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return {
+			content: [{ type: "text" as const, text: `Rejected concession: ${message}` }],
+			isError: true,
+			details: { rejected: candidate, reason: message },
+		};
+	}
+
+	const telemetryPath = path.join(questDir, "telemetry", "events.jsonl");
+	ensureDir(path.dirname(telemetryPath));
+	fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+
+	return {
+		content: [{ type: "text" as const, text: "Concession recorded." }],
 		details: { event },
 	};
 }

@@ -65,7 +65,7 @@ describe('piQuestExtension', () => {
     vi.clearAllMocks();
   });
 
-  it('registers one command and five tools', () => {
+  it('registers one command and seven tools', () => {
     piQuestExtension(mockPi as any);
     expect(mockPi.registerShortcut).toHaveBeenCalledTimes(1);
     expect(mockPi.registerShortcut).toHaveBeenCalledWith(
@@ -84,6 +84,8 @@ describe('piQuestExtension', () => {
       'quest_rescue',
       'quest_write_workflow',
       'quest_telemetry_event',
+      'quest_progress_beat',
+      'quest_concession',
     ]);
   });
 
@@ -473,6 +475,260 @@ describe('piQuestExtension', () => {
       );
 
       expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('quest_progress_beat', () => {
+    function workflowJSON() {
+      return JSON.stringify({
+        id: 'q1',
+        title: 'Q',
+        status: 'executing',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'H.md' },
+      });
+    }
+
+    it('emits a valid progress_beat event when supplied phase, runId, questId', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': workflowJSON(),
+      });
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_progress_beat'];
+
+      const result = await tool.execute(
+        'tc-1',
+        { questId: 'q1', runId: 'run-1', phase: 'implementing', confidence: 0.7, note: 'edited foo' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+
+      expect(result.isError).toBeFalsy();
+
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const lines = jsonl.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      const event = JSON.parse(lines[0]);
+      expect(event.event).toBe('progress_beat');
+      expect(event.phase).toBe('implementing');
+      expect(event.confidence).toBe(0.7);
+      expect(event.note).toBe('edited foo');
+      expect(event.runId).toBe('run-1');
+      expect(event.questId).toBe('q1');
+      expect(typeof event.timestamp).toBe('string');
+    });
+
+    it('rate-limits beats to 1 per 15s per runId (second beat is a success no-op)', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': workflowJSON(),
+      });
+
+      // Reset the in-memory last-beat map so the test is hermetic.
+      const { __lastBeatAtForTests } = await import('./agents');
+      __lastBeatAtForTests.clear();
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_progress_beat'];
+
+      const first = await tool.execute(
+        'tc-1',
+        { questId: 'q1', runId: 'run-1', phase: 'implementing' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+      expect(first.isError).toBeFalsy();
+
+      // Second call immediately after — within 15s window. Expect no-op.
+      const second = await tool.execute(
+        'tc-2',
+        { questId: 'q1', runId: 'run-1', phase: 'still implementing' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+      expect(second.isError).toBeFalsy();
+
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const lines = jsonl.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+
+      // The result text or details should signal rate-limited.
+      const text = (second.content?.[0] as { text?: string } | undefined)?.text ?? '';
+      const flagged =
+        text.toLowerCase().includes('rate') ||
+        (second.details && (second.details as any).rateLimited === true);
+      expect(flagged).toBeTruthy();
+    });
+
+    it('does NOT rate-limit a different runId', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': workflowJSON(),
+      });
+      const { __lastBeatAtForTests } = await import('./agents');
+      __lastBeatAtForTests.clear();
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_progress_beat'];
+
+      await tool.execute(
+        'tc-1',
+        { questId: 'q1', runId: 'run-1', phase: 'a' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+      await tool.execute(
+        'tc-2',
+        { questId: 'q1', runId: 'run-2', phase: 'b' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const lines = jsonl.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(2);
+    });
+
+    it('returns error when quest not found', async () => {
+      vol.fromJSON({});
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_progress_beat'];
+
+      const result = await tool.execute(
+        'tc-1',
+        { questId: 'missing', runId: 'run-1', phase: 'x' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('quest_concession', () => {
+    function workflowJSON() {
+      return JSON.stringify({
+        id: 'q1',
+        title: 'Q',
+        status: 'executing',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'H.md' },
+      });
+    }
+
+    it('emits a valid concession event', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': workflowJSON(),
+      });
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_concession'];
+
+      const result = await tool.execute(
+        'tc-1',
+        {
+          questId: 'q1',
+          runId: 'run-1',
+          decision: 'used existing helper instead of adding lib',
+          rationale: 'simpler and faster',
+        },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+
+      expect(result.isError).toBeFalsy();
+
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const lines = jsonl.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      const event = JSON.parse(lines[0]);
+      expect(event.event).toBe('concession');
+      expect(event.decision).toBe('used existing helper instead of adding lib');
+      expect(event.rationale).toBe('simpler and faster');
+      expect(event.runId).toBe('run-1');
+      expect(event.questId).toBe('q1');
+    });
+
+    it('is not rate-limited (two concessions in a row both land)', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': workflowJSON(),
+      });
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_concession'];
+
+      await tool.execute(
+        'tc-1',
+        { questId: 'q1', runId: 'run-1', decision: 'd1', rationale: 'r1' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+      await tool.execute(
+        'tc-2',
+        { questId: 'q1', runId: 'run-1', decision: 'd2', rationale: 'r2' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const lines = jsonl.trim().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(2);
+    });
+
+    it('returns error when quest not found', async () => {
+      vol.fromJSON({});
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_concession'];
+
+      const result = await tool.execute(
+        'tc-1',
+        { questId: 'missing', runId: 'r', decision: 'd', rationale: 'r' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+      expect(result.isError).toBe(true);
+    });
+  });
+
+  describe('autonomous agent definitions', () => {
+    it('implementation agent declares quest_progress_beat and quest_concession tools', async () => {
+      // Use real fs to read the on-disk agent file, since `node:fs` is mocked.
+      const realFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+      const path = await import('node:path');
+      const filePath = path.resolve(__dirname, '..', 'agents', 'implementation.md');
+      const content = realFs.readFileSync(filePath, 'utf-8');
+      expect(content).toMatch(/quest_progress_beat/);
+      expect(content).toMatch(/quest_concession/);
     });
   });
 });

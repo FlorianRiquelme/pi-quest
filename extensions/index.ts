@@ -28,6 +28,8 @@ import {
 	showStatus,
 } from "./commands.js";
 import {
+	executeQuestConcession,
+	executeQuestProgressBeat,
 	executeQuestRescue,
 	executeQuestRunWorkItem,
 	executeQuestTelemetryEvent,
@@ -38,6 +40,7 @@ import {
 	renderResultQuestRunWorkItem,
 	renderResultQuestWorkItemStatus,
 } from "./tools.js";
+import { reapOrphanedRuns, startLivenessSupervisor } from "./agents.js";
 import { setQuestWidget } from "./ui/widget.js";
 
 export default function piQuestExtension(pi: ExtensionAPI) {
@@ -216,6 +219,58 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerTool({
+		name: "quest_progress_beat",
+		label: "Quest Progress Beat",
+		description:
+			"Emit a semantic progress_beat event from inside a running subagent. " +
+			"Rate-limited to 1 per 15s per run; later beats inside the window return success but are no-ops. " +
+			"The parent supervisor emits a synthetic 'alive' beat every 60s when no semantic beat arrives, " +
+			"so prefer one beat per phase change with a meaningful `phase` and optional `confidence`/`note`.",
+		promptSnippet:
+			"Emit a semantic Quest progress beat (rate-limited to 1 per 15s per run); pass questId, runId, phase",
+		// Approach B (see executeQuestProgressBeat): questId and runId are required tool args.
+		// The subagent reads them from PI_QUEST_QUEST_ID / PI_QUEST_RUN_ID env vars injected by startSubagentRun.
+		parameters: Type.Object({
+			questId: Type.String({ description: "Quest ID (from PI_QUEST_QUEST_ID)." }),
+			runId: Type.String({ description: "Run ID (from PI_QUEST_RUN_ID)." }),
+			phase: Type.String({
+				description: 'Phase string, e.g. "implementing", "verifying", "reading-docs".',
+			}),
+			confidence: Type.Optional(
+				Type.Number({ description: "Subjective confidence 0..1 (optional)." }),
+			),
+			note: Type.Optional(Type.String({ description: "Short free-text note (optional)." })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			return executeQuestProgressBeat(params, ctx);
+		},
+	});
+
+	pi.registerTool({
+		name: "quest_concession",
+		label: "Quest Concession",
+		description:
+			"Emit a concession event recording a judgment call the agent made without asking the user. " +
+			"Not rate-limited — every concession should land in the Concession Ledger.",
+		promptSnippet:
+			"Emit a Quest concession (decision the agent made without asking the user); pass questId, runId, decision, rationale",
+		// Approach B (see executeQuestConcession): questId and runId are required tool args.
+		parameters: Type.Object({
+			questId: Type.String({ description: "Quest ID (from PI_QUEST_QUEST_ID)." }),
+			runId: Type.String({ description: "Run ID (from PI_QUEST_RUN_ID)." }),
+			decision: Type.String({
+				description: "What the agent decided (e.g. 'used existing helper instead of adding a dep').",
+			}),
+			rationale: Type.String({
+				description: "Why the agent took this path without asking.",
+			}),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			return executeQuestConcession(params, ctx);
+		},
+	});
+
 	/* ================================ Live widget refresh ================================ */
 
 	pi.on("tool_execution_end", async (event, ctx) => {
@@ -236,6 +291,15 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 			// side-effect: pre-load quest IDs into any future tracking structures
 			void id;
 		}
+		// ADR 009: reconcile background runs lost across pi restarts.
+		try {
+			reapOrphanedRuns(ctx.cwd);
+		} catch {
+			/* never let reconciliation crash the session */
+		}
+		// ADR 010 §3: start the 60s synthetic liveness loop. The interval
+		// unrefs itself so it doesn't keep pi alive on its own.
+		startLivenessSupervisor(ctx.cwd);
 		setQuestWidget(ctx);
 	});
 }

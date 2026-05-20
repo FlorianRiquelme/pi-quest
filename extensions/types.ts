@@ -31,7 +31,7 @@ export interface BackgroundRunSummary {
 	questId: string;
 	workItemId: string;
 	agentName: string;
-	status: "running" | "completed" | "failed" | "cancelled";
+	status: "running" | "completed" | "failed" | "cancelled" | "orphaned";
 	startedAt: string;
 	updatedAt: string;
 	completedAt?: string;

@@ -22,7 +22,7 @@ export interface WorkItemInfo {
 	fileName: string;
 	filePath: string;
 	hasReport: boolean;
-	latestRunStatus?: "running" | "completed" | "failed" | "cancelled";
+	latestRunStatus?: "running" | "completed" | "failed" | "cancelled" | "orphaned";
 }
 
 export interface ArtifactInfo {

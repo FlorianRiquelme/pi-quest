@@ -70,6 +70,24 @@ describe('isValidTransition', () => {
     expect(isValidTransition('unknown' as any, 'intake')).toBe(false);
   });
 
+  describe('UAT failure loop transitions (M4-3)', () => {
+    it('allows uat-ready → completed (all-pass path)', () => {
+      expect(isValidTransition('uat-ready', 'completed')).toBe(true);
+    });
+
+    it('allows uat-ready → uat-failed (Accept path)', () => {
+      expect(isValidTransition('uat-ready', 'uat-failed')).toBe(true);
+    });
+
+    it('allows uat-ready → planned (Iterate path)', () => {
+      expect(isValidTransition('uat-ready', 'planned')).toBe(true);
+    });
+
+    it('allows uat-failed → planned (Iterate from uat-failed)', () => {
+      expect(isValidTransition('uat-failed', 'planned')).toBe(true);
+    });
+  });
+
   it('respects blocked as a flexible recovery state', () => {
     expect(isValidTransition('blocked', 'needs-resolution')).toBe(true);
     expect(isValidTransition('blocked', 'reviewing')).toBe(true);

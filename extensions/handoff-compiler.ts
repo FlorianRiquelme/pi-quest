@@ -9,7 +9,7 @@
  * The Launch Gate then reads `compiler_diagnostics:` from the plan and blocks
  * if any `severity: error` entries are present.
  *
- * Seven starter rules (ADR 012):
+ * Eight rules (seven from ADR 012; eighth from ADR 016 / M4-3):
  *   - unaddressed_requirement   (error)   handoff `[Rn]` not addressed by any work-item
  *   - unknown_dependency        (error)   depends_on references an unknown work-item ID
  *   - cyclic_dependencies       (error)   depends_on graph has a cycle
@@ -17,6 +17,7 @@
  *   - missing_verification      (warning) work-item lacks verification
  *   - empty_claims              (warning) work-item has no claims
  *   - untraced_uat_scenario     (warning) UAT scenario traces_to unknown work-item
+ *   - vague_uat_scenario        (warning) UAT scenario verify is empty / only vague phrases
  *
  * Also exports `checkLockedOutWrites`, the pure function backing the
  * `locked_out_write` log-only anomaly (ADR 010 / 012). Wiring into the post-run
@@ -24,6 +25,7 @@
  */
 
 import { parseFrontmatter, writePlanFrontmatter, type FrontmatterValue } from "./launch-review.js";
+import { parseUatScenarios as parseUatFrontmatterScenarios } from "./uat-scenarios.js";
 
 /* ================================ Types ================================ */
 
@@ -154,7 +156,47 @@ export function compileHandoff(input: CompileHandoffInput): CompilerDiagnostic[]
 		}
 	}
 
+	// Rule: vague_uat_scenario
+	// Reads the YAML-frontmatter scenarios (ADR 016 contract), independent of
+	// the heading-based `traces_to` parsing above. Fires when every entry in
+	// the scenario's `verify:` list is empty or matches a vague phrase. Vague
+	// scenarios train users to rubber-stamp at the most fatigued moment.
+	if (uatMarkdown) {
+		const frontmatterScenarios = parseUatFrontmatterScenarios(uatMarkdown);
+		for (const sc of frontmatterScenarios) {
+			if (isVagueVerify(sc.verify)) {
+				const example = sc.verify.length === 0 ? "(empty)" : sc.verify.join(" / ");
+				diagnostics.push({
+					severity: "warning",
+					rule: "vague_uat_scenario",
+					message: `Scenario ${sc.id} has vague verify criteria: ${example}`,
+				});
+			}
+		}
+	}
+
 	return diagnostics;
+}
+
+/**
+ * Phrases that read like rubber-stamp signals — present in `verify:` they tell
+ * the user nothing concrete to check. Case-insensitive substring match.
+ */
+const VAGUE_VERIFY_PHRASES: readonly string[] = [
+	"looks right",
+	"works as expected",
+	"feels good",
+	"seems fine",
+];
+
+function isVagueVerify(verify: string[]): boolean {
+	if (verify.length === 0) return true;
+	return verify.every((entry) => {
+		const trimmed = entry.trim();
+		if (trimmed.length === 0) return true;
+		const lower = trimmed.toLowerCase();
+		return VAGUE_VERIFY_PHRASES.some((phrase) => lower.includes(phrase));
+	});
 }
 
 /**

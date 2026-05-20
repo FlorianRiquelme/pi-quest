@@ -19,6 +19,7 @@ import { Type } from "typebox";
 import { QUEST_EVENT_KINDS } from "./events.js";
 import { getAllQuestIds } from "./state.js";
 import {
+	cmdBrief,
 	cmdConfig,
 	cmdDashboard,
 	cmdIntake,
@@ -50,7 +51,7 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("quest", {
 		description:
-			"Quest execution engine. /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|config|dashboard]",
+			"Quest execution engine. /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|config|dashboard]",
 		handler: async (args, ctx) => {
 			const parts = args.trim().split(/\s+/);
 			const subcommand = parts[0]?.toLowerCase() || "";
@@ -79,6 +80,10 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 					await cmdSelect(ctx, parts.slice(1));
 					setQuestWidget(ctx);
 					break;
+				case "brief":
+					await cmdBrief(ctx);
+					setQuestWidget(ctx);
+					break;
 				case "config":
 					await cmdConfig(ctx);
 					break;
@@ -91,7 +96,7 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 				default:
 					ctx.ui.notify(`Unknown quest subcommand: ${subcommand}`, "error");
 					ctx.ui.notify(
-						"Usage: /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|config|dashboard]",
+						"Usage: /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|config|dashboard]",
 						"info",
 					);
 			}

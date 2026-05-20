@@ -892,4 +892,48 @@ describe('piQuestExtension', () => {
       expect(content).toMatch(/quest_concession/);
     });
   });
+
+  describe('Homecoming Brief auto-trigger via quest_write_workflow (M4-1)', () => {
+    beforeEach(async () => {
+      const { __setNarrativeSpawnerForTests } = await import('./commands');
+      __setNarrativeSpawnerForTests(async () => 'STUB NARRATIVE BODY');
+    });
+
+    it('regenerates BRIEF.md when set-status advances executing → verification-ready', async () => {
+      const workflow = {
+        id: 'qb',
+        title: 'Brief Test',
+        status: 'verification',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: {
+          handoff: 'HANDOFF.md',
+          verification: 'VERIFICATION.md',
+          brief: 'BRIEF.md',
+        },
+        baseSha: 'abc1234',
+        questBranch: 'quest/qb',
+      };
+      vol.fromJSON({
+        '/project/.pi/quests/qb/workflow.json': JSON.stringify(workflow),
+        '/project/.pi/quests/qb/VERIFICATION.md': '# Verification\npass\n',
+      });
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_write_workflow'];
+      const result = await tool.execute(
+        'tc-1',
+        { questId: 'qb', action: 'set-status', status: 'verification-ready' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+      expect(result.isError).toBeFalsy();
+      expect(vol.existsSync('/project/.pi/quests/qb/BRIEF.md')).toBe(true);
+      const brief = vol.readFileSync('/project/.pi/quests/qb/BRIEF.md', 'utf-8') as string;
+      expect(brief).toContain('STUB NARRATIVE BODY');
+      expect(brief).toContain('## Narrative');
+    });
+  });
 });

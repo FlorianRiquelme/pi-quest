@@ -27,6 +27,121 @@ import { resolveReferences } from "./references.js";
 import { getAllQuestIds, loadCurrentState, loadQuestWorkflow, saveCurrentState, saveQuestWorkflow } from "./state.js";
 import type { CommandContext } from "./types.js";
 import { validateEvent } from "./events.js";
+import {
+	generateHomecomingBrief,
+	isAutonomousToInteractiveTransition,
+	type NarrativeSpawnInput,
+} from "./homecoming-brief.js";
+import { runSubagent } from "./agents.js";
+
+/* ================================ Homecoming Brief (M4-1 / ADR 015) ================================ */
+
+/**
+ * Default narrative spawner — invokes the `quest-homecoming` subagent
+ * (`agents/homecoming.md`) via the lightweight `runSubagent` helper. Tests can
+ * override this via the {@link __setNarrativeSpawnerForTests} hook so they
+ * don't shell out.
+ */
+let narrativeSpawner: (input: NarrativeSpawnInput, cwd: string) => Promise<string> = async (
+	input,
+	cwd,
+) => {
+	const task = [
+		"Compose the Narrative section of the Homecoming Brief.",
+		"Read the event log at:",
+		`  ${input.eventLogPath}`,
+		"Read run reports under:",
+		`  ${input.reportsDir}`,
+		"Quest ID: " + input.questId,
+		"Output prose only — no headings, no bullets. 3–5 sentences, first person.",
+	].join("\n");
+	try {
+		const result = await runSubagent({ cwd, agentName: "quest-homecoming", task });
+		if (result.exitCode === 0 && result.stdout.trim().length > 0) {
+			return result.stdout.trim();
+		}
+	} catch {
+		/* fall through to template */
+	}
+	// Fallback when the agent didn't run (e.g. in environments without claude
+	// available). Keep this neutral and short — the rest of the Brief still
+	// carries the structural signal.
+	return "_Narrative pending — the Homecoming Agent did not produce prose for this quest._";
+};
+
+/**
+ * Test-only hook: override the narrative spawn to a stub that returns canned
+ * prose. Production code never calls this.
+ */
+export function __setNarrativeSpawnerForTests(
+	fn: (input: NarrativeSpawnInput, cwd: string) => Promise<string>,
+): void {
+	narrativeSpawner = fn;
+}
+
+/**
+ * Regenerate the Homecoming Brief for `questId` and surface it via the UI.
+ *
+ * Best-effort: failures (missing quest, missing workflow, spawn error) are
+ * swallowed so the caller's main path is never blocked by a Brief problem.
+ * Returns the generated content (empty string if nothing was written).
+ */
+export async function regenerateHomecomingBrief(
+	ctx: { cwd: string; ui: { notify: (msg: string, level?: "error" | "info" | "warning") => void } },
+	questId: string,
+	opts: { display?: boolean } = {},
+): Promise<string> {
+	try {
+		const result = await generateHomecomingBrief({
+			repoRoot: ctx.cwd,
+			questId,
+			spawnNarrativeAgent: (input) => narrativeSpawner(input, ctx.cwd),
+		});
+		if (opts.display && result.content) {
+			ctx.ui.notify(result.content, "info");
+		}
+		return result.content;
+	} catch {
+		return "";
+	}
+}
+
+/**
+ * Update the per-quest `lastSeenEventTimestamp` pointer to `iso`. Creates the
+ * map if missing.
+ */
+function updateLastSeenEventTimestamp(cwd: string, questId: string, iso: string): void {
+	const state = loadCurrentState(cwd);
+	const next = { ...state };
+	const map = { ...(next.lastSeenEventTimestamp ?? {}) };
+	map[questId] = iso;
+	next.lastSeenEventTimestamp = map;
+	saveCurrentState(cwd, next);
+}
+
+/**
+ * Read the most recent event timestamp from a quest's events.jsonl. Returns
+ * `undefined` if no events exist.
+ */
+function latestEventTimestamp(cwd: string, questId: string): string | undefined {
+	const eventsPath = path.join(questDirPath(cwd, questId), "telemetry", "events.jsonl");
+	if (!fs.existsSync(eventsPath)) return undefined;
+	const raw = fs.readFileSync(eventsPath, "utf-8");
+	let latest: string | undefined;
+	for (const line of raw.split("\n")) {
+		const t = line.trim();
+		if (!t) continue;
+		try {
+			const e = JSON.parse(t) as { timestamp?: string };
+			if (typeof e.timestamp === "string") {
+				if (latest === undefined || e.timestamp > latest) latest = e.timestamp;
+			}
+		} catch {
+			/* skip */
+		}
+	}
+	return latest;
+}
 
 export async function ensureGitignore(cwd: string) {
 	const gitignorePath = path.join(cwd, ".gitignore");
@@ -149,6 +264,11 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 	// Widget mood shift is handled by M3-1 (Hearth Widget Needs-you mood) — no
 	// wiring required here.
 	fireUatDoorbell(ctx, workflow, questDir, previousStatus);
+	// M4-1 / ADR 015: auto-generate the Homecoming Brief at autonomous-to-
+	// interactive transitions so it's ready when the user next invokes /quest.
+	if (isAutonomousToInteractiveTransition(previousStatus, workflow.status)) {
+		await regenerateHomecomingBrief(ctx, id);
+	}
 	ctx.ui.notify(`Quest '${id}' status → ${newStatus}`, "info");
 }
 
@@ -193,14 +313,20 @@ export function fireUatDoorbell(
  * Auto-router branch (ADR 008 + ADR 012): advance from `planned` to
  * `launch-review` and load the Launch Review skill inline.
  *
- * Returns true if it advanced a stage (so the outer router can decide whether
- * to keep going or stop for interactive input). For M2-1 we only handle the
- * `planned → launch-review` transition; other stages remain on `showStatus`.
+ * Returns true if it advanced a stage OR if it displayed the Homecoming Brief
+ * for new events (so the outer router can decide whether to keep going or stop
+ * for interactive input). For M2-1 we only handle the `planned → launch-review`
+ * transition; other stages remain on `showStatus`.
+ *
+ * M4-1 / ADR 015: also checks whether the active quest has events newer than
+ * `lastSeenEventTimestamp[questId]`. If yes, regenerates and displays the
+ * Homecoming Brief, then advances the pointer.
  */
 export async function tryAutoRoute(ctx: CommandContext): Promise<boolean> {
 	const state = loadCurrentState(ctx.cwd);
 	if (!state.currentQuestId) return false;
-	const questDir = questDirPath(ctx.cwd, state.currentQuestId);
+	const questId = state.currentQuestId;
+	const questDir = questDirPath(ctx.cwd, questId);
 	const workflow = loadQuestWorkflow(questDir);
 	if (!workflow) return false;
 
@@ -216,7 +342,39 @@ export async function tryAutoRoute(ctx: CommandContext): Promise<boolean> {
 		return true;
 	}
 
+	// M4-1: Homecoming Brief auto-display on new state.
+	const latest = latestEventTimestamp(ctx.cwd, questId);
+	if (latest) {
+		const seen = state.lastSeenEventTimestamp?.[questId];
+		if (!seen || latest > seen) {
+			const content = await regenerateHomecomingBrief(ctx, questId, { display: true });
+			updateLastSeenEventTimestamp(ctx.cwd, questId, latest);
+			if (content) return true;
+		}
+	}
+
 	return false;
+}
+
+/**
+ * `/quest brief` — always regenerate the Homecoming Brief for the active quest
+ * and display its content. Advances the `lastSeenEventTimestamp` pointer so the
+ * next `/quest` invocation doesn't re-trigger the auto-display path.
+ */
+export async function cmdBrief(ctx: CommandContext) {
+	const state = loadCurrentState(ctx.cwd);
+	if (!state.currentQuestId) {
+		ctx.ui.notify("No active quest. Use /quest select <id> first.", "warning");
+		return;
+	}
+	const questId = state.currentQuestId;
+	const content = await regenerateHomecomingBrief(ctx, questId, { display: true });
+	if (!content) {
+		ctx.ui.notify(`Could not generate brief for '${questId}'.`, "error");
+		return;
+	}
+	const latest = latestEventTimestamp(ctx.cwd, questId);
+	if (latest) updateLastSeenEventTimestamp(ctx.cwd, questId, latest);
 }
 
 /**
@@ -360,6 +518,7 @@ export async function cmdIntake(ctx: CommandContext, args: string[]) {
 			plan: "IMPLEMENTATION_PLAN.md",
 			verification: "VERIFICATION.md",
 			uat: "UAT.md",
+			brief: "BRIEF.md",
 		},
 	};
 	saveQuestWorkflow(questDir, workflow);

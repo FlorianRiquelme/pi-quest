@@ -8,7 +8,8 @@ import { Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { isValidTransition, QuestStatus } from "../lib.js";
-import { captureQuestBranchOnExecuting, fireUatDoorbell, runLaunchGate } from "./commands.js";
+import { captureQuestBranchOnExecuting, fireUatDoorbell, regenerateHomecomingBrief, runLaunchGate } from "./commands.js";
+import { isAutonomousToInteractiveTransition } from "./homecoming-brief.js";
 import { MAX_SUBAGENT_CAPTURE_CHARS } from "./fs-utils.js";
 import { ensureDir } from "./fs-utils.js";
 import { questDirPath } from "./paths.js";
@@ -437,6 +438,11 @@ export async function executeQuestWriteWorkflow(
 		// M4-2: UAT doorbell at the verification-ready → uat-ready boundary
 		// (ADR 016). Widget mood shift is M3-1's responsibility — not here.
 		fireUatDoorbell(ctx, workflow, questDir, previousStatus);
+		// M4-1 / ADR 015: pre-compose the Homecoming Brief at autonomous-to-
+		// interactive transitions so it's ready when the user next invokes /quest.
+		if (isAutonomousToInteractiveTransition(previousStatus, workflow.status)) {
+			await regenerateHomecomingBrief(ctx, params.questId);
+		}
 		return {
 			content: [
 				{

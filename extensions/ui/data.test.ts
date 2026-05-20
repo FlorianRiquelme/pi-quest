@@ -100,10 +100,20 @@ describe('UI data layer', () => {
     const detail = getQuestDetail(cwd, 'active-quest');
     expect(detail).toBeDefined();
     expect(detail?.workflow.id).toBe('active-quest');
-    expect(detail?.artifacts).toHaveLength(7); // all artifact keys
+    expect(detail?.artifacts).toHaveLength(8); // all artifact keys, including Homecoming Brief (M4-1)
     expect(detail?.artifacts.filter(a => a.exists)).toHaveLength(3);
     expect(detail?.workItems).toHaveLength(2);
     expect(detail?.recentRuns).toHaveLength(2);
+  });
+
+  it('getQuestDetail surfaces the Homecoming Brief artifact when BRIEF.md exists (M4-1)', () => {
+    vol.writeFileSync(`${cwd}/.pi/quests/active-quest/BRIEF.md`, '# Brief');
+    const detail = getQuestDetail(cwd, 'active-quest');
+    const brief = detail?.artifacts.find((a) => a.key === 'brief');
+    expect(brief).toBeDefined();
+    expect(brief?.label).toBe('Homecoming Brief');
+    expect(brief?.exists).toBe(true);
+    expect(brief?.filePath).toBe(`${cwd}/.pi/quests/active-quest/BRIEF.md`);
   });
 
   it('getQuestDetail returns undefined for missing quest', () => {

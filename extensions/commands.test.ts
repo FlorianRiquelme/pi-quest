@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fs, vol } from 'memfs';
-import { showStatus, listQuests, cmdSelect, cmdSetStatus, cmdConfig } from './commands';
+import {
+  showStatus,
+  listQuests,
+  cmdSelect,
+  cmdSetStatus,
+  cmdConfig,
+  cmdBrief,
+  tryAutoRoute,
+  __setNarrativeSpawnerForTests,
+} from './commands';
 import type { CommandContext } from './types';
 
 vi.mock('node:fs', async () => {
@@ -615,6 +624,161 @@ describe('commands', () => {
       await cmdConfig(ctx);
       expect(notifyCalls[0].msg).toContain('Global config');
       expect(notifyCalls[0].msg).toContain('\nDefaults:');
+    });
+  });
+
+  describe('Homecoming Brief (M4-1 / ADR 015)', () => {
+    beforeEach(() => {
+      __setNarrativeSpawnerForTests(async () => 'STUB NARRATIVE');
+    });
+
+    const verificationWorkflow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'q1',
+      title: 'My Quest',
+      status: 'verification',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+      source: {},
+      artifacts: { handoff: 'HANDOFF.md', verification: 'VERIFICATION.md', brief: 'BRIEF.md' },
+      baseSha: 'abc1234',
+      questBranch: 'quest/q1',
+      ...overrides,
+    });
+
+    it('regenerates BRIEF.md at executing → verification-ready transition (cmdSetStatus path)', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(verificationWorkflow()),
+        '/project/.pi/quests/q1/VERIFICATION.md': '# Verification\npass\n',
+      });
+      const ctx = mockCtx('/project');
+      await cmdSetStatus(ctx, ['q1', 'verification-ready']);
+      // BRIEF.md should exist now.
+      expect(vol.existsSync('/project/.pi/quests/q1/BRIEF.md')).toBe(true);
+      const brief = vol.readFileSync('/project/.pi/quests/q1/BRIEF.md', 'utf-8') as string;
+      expect(brief).toContain('STUB NARRATIVE');
+      expect(brief).toContain('## Narrative');
+    });
+
+    it('does NOT regenerate BRIEF.md on non-autonomous-to-interactive transitions', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1', title: 'Q', status: 'intake',
+          createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+          source: {}, artifacts: { handoff: 'H.md', brief: 'BRIEF.md' },
+        }),
+      });
+      const ctx = mockCtx('/project');
+      await cmdSetStatus(ctx, ['q1', 'reviewing']);
+      // intake → reviewing is not an autonomous-to-interactive transition.
+      expect(vol.existsSync('/project/.pi/quests/q1/BRIEF.md')).toBe(false);
+    });
+
+    it('cmdBrief always regenerates and notifies the user with the content', async () => {
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(verificationWorkflow()),
+      });
+      const ctx = mockCtx('/project');
+      await cmdBrief(ctx);
+      expect(vol.existsSync('/project/.pi/quests/q1/BRIEF.md')).toBe(true);
+      // The notify should include the brief content (markdown header).
+      const briefNotify = notifyCalls.find((c) => c.msg.includes('# My Quest'));
+      expect(briefNotify).toBeDefined();
+    });
+
+    it('cmdBrief warns when there is no active quest', async () => {
+      const ctx = mockCtx('/project');
+      await cmdBrief(ctx);
+      expect(notifyCalls[0].level).toBe('warning');
+      expect(notifyCalls[0].msg).toContain('No active quest');
+    });
+
+    it('cmdBrief updates lastSeenEventTimestamp after generating', async () => {
+      const eventLine = JSON.stringify({
+        event: 'stage_entered',
+        timestamp: '2026-05-19T17:00:00.000Z',
+        questId: 'q1',
+        to: 'verification-ready',
+      });
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(verificationWorkflow()),
+        '/project/.pi/quests/q1/telemetry/events.jsonl': eventLine + '\n',
+      });
+      const ctx = mockCtx('/project');
+      await cmdBrief(ctx);
+      const persistedState = JSON.parse(
+        vol.readFileSync('/project/.pi/quest/state.json', 'utf-8') as string,
+      );
+      expect(persistedState.lastSeenEventTimestamp?.q1).toBe('2026-05-19T17:00:00.000Z');
+    });
+
+    it('tryAutoRoute displays the Brief and advances lastSeenEventTimestamp when there are newer events', async () => {
+      const eventLine = JSON.stringify({
+        event: 'stage_entered',
+        timestamp: '2026-05-19T17:00:00.000Z',
+        questId: 'q1',
+        to: 'verification-ready',
+      });
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(verificationWorkflow({
+          status: 'verification-ready',
+        })),
+        '/project/.pi/quests/q1/telemetry/events.jsonl': eventLine + '\n',
+      });
+      const ctx = mockCtx('/project');
+      const advanced = await tryAutoRoute(ctx);
+      expect(advanced).toBe(true);
+      // The brief content should have been notified to the user.
+      const briefNotify = notifyCalls.find((c) => c.msg.includes('# My Quest'));
+      expect(briefNotify).toBeDefined();
+      // Pointer advanced.
+      const persistedState = JSON.parse(
+        vol.readFileSync('/project/.pi/quest/state.json', 'utf-8') as string,
+      );
+      expect(persistedState.lastSeenEventTimestamp?.q1).toBe('2026-05-19T17:00:00.000Z');
+    });
+
+    it('tryAutoRoute does NOT re-display the Brief when no new events since last seen', async () => {
+      const eventLine = JSON.stringify({
+        event: 'stage_entered',
+        timestamp: '2026-05-19T17:00:00.000Z',
+        questId: 'q1',
+        to: 'verification-ready',
+      });
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({
+          currentQuestId: 'q1',
+          lastSeenEventTimestamp: { q1: '2026-05-19T17:00:00.000Z' },
+        }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(verificationWorkflow({
+          status: 'verification-ready',
+        })),
+        '/project/.pi/quests/q1/telemetry/events.jsonl': eventLine + '\n',
+      });
+      const ctx = mockCtx('/project');
+      const advanced = await tryAutoRoute(ctx);
+      expect(advanced).toBe(false);
+      // No brief content was notified.
+      const briefNotify = notifyCalls.find((c) => c.msg.includes('# My Quest'));
+      expect(briefNotify).toBeUndefined();
+    });
+
+    it('intake creates a workflow whose artifacts.brief defaults to BRIEF.md', async () => {
+      vol.fromJSON({
+        '/project/handoff.md': '# Handoff Title\n\nbody',
+      });
+      const { cmdIntake } = await import('./commands');
+      const ctx = mockCtx('/project');
+      await cmdIntake(ctx, ['handoff.md']);
+      // Find the persisted workflow under .pi/quests/<id>/workflow.json
+      const questIds = vol.readdirSync('/project/.pi/quests') as string[];
+      expect(questIds.length).toBe(1);
+      const wf = JSON.parse(
+        vol.readFileSync(`/project/.pi/quests/${questIds[0]}/workflow.json`, 'utf-8') as string,
+      );
+      expect(wf.artifacts.brief).toBe('BRIEF.md');
     });
   });
 });

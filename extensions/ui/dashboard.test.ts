@@ -7,6 +7,11 @@ vi.mock('node:fs', async () => {
   return { default: fs, ...fs };
 });
 
+vi.mock('../worktree.js', () => ({
+  removeRunWorktree: vi.fn().mockResolvedValue(undefined),
+  mergeRunBranchIntoQuest: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
 describe('formatRelative', () => {
   it('returns "just now" for < 60 seconds', () => {
     const now = new Date().toISOString();
@@ -121,5 +126,82 @@ describe('QuestDashboard', () => {
 
     dashboard.handleInput('\x1b'); // escape
     expect(closed).toBe(true);
+  });
+
+  /* ============================== Paused Runs (M3-3) ============================== */
+
+  describe('Paused Run row + actions', () => {
+    beforeEach(() => {
+      // Seed a paused run on q1.
+      vol.mkdirSync(`${cwd}/.pi/quests/q1/runs`, { recursive: true });
+      vol.writeFileSync(`${cwd}/.pi/quests/q1/runs/r-paused.json`, JSON.stringify({
+        runId: 'r-paused',
+        questId: 'q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        status: 'paused',
+        startedAt: '2026-05-19T17:00:00.000Z',
+        updatedAt: '2026-05-19T17:25:00.000Z',
+        paused_at: '2026-05-19T17:25:00.000Z',
+        paused_reason: 'heartbeat_missed',
+        stdoutPath: '/x',
+        stderrPath: '/y',
+        reportPath: '/z',
+        statusPath: `${cwd}/.pi/quests/q1/runs/r-paused.json`,
+        worktreePath: `${cwd}/.pi/quests/q1/worktrees/r-paused`,
+        runBranch: 'quest-run/q1/r-paused',
+        questBranch: 'quest/q1',
+      }));
+    });
+
+    it('renders the Paused Run row with the pause reason', () => {
+      const dashboard = new QuestDashboard(mockCtx, mockTheme, () => {});
+      dashboard.setVisibleRows(40);
+      const lines = dashboard.render(120);
+      // Find a line that mentions the rule.
+      const joined = lines.join('\n');
+      expect(joined).toContain('Paused: heartbeat_missed');
+      expect(joined).toContain('Paused Runs');
+    });
+
+    it('Discard action removes the worktree and marks the run cancelled', async () => {
+      const dashboard = new QuestDashboard(mockCtx, mockTheme, () => {});
+      dashboard.setVisibleRows(40);
+      dashboard.render(120);
+
+      const worktree = await import('../worktree.js');
+      (worktree.removeRunWorktree as any).mockClear();
+      await dashboard.discardSelectedPausedRun();
+
+      expect(worktree.removeRunWorktree).toHaveBeenCalledWith(
+        `${cwd}/.pi/quests/q1/worktrees/r-paused`,
+      );
+      const updated = JSON.parse(
+        vol.readFileSync(`${cwd}/.pi/quests/q1/runs/r-paused.json`, 'utf-8') as string,
+      );
+      expect(updated.status).toBe('cancelled');
+    });
+
+    it('Force-Complete action merges and marks the run completed', async () => {
+      const dashboard = new QuestDashboard(mockCtx, mockTheme, () => {});
+      dashboard.setVisibleRows(40);
+      dashboard.render(120);
+
+      const worktree = await import('../worktree.js');
+      (worktree.mergeRunBranchIntoQuest as any).mockClear().mockResolvedValue({ ok: true });
+      (worktree.removeRunWorktree as any).mockClear();
+
+      await dashboard.forceCompleteSelectedPausedRun();
+
+      expect(worktree.mergeRunBranchIntoQuest).toHaveBeenCalledWith({
+        repoRoot: cwd,
+        questBranch: 'quest/q1',
+        runBranch: 'quest-run/q1/r-paused',
+      });
+      const updated = JSON.parse(
+        vol.readFileSync(`${cwd}/.pi/quests/q1/runs/r-paused.json`, 'utf-8') as string,
+      );
+      expect(updated.status).toBe('completed');
+    });
   });
 });

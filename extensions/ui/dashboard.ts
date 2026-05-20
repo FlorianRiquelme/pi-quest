@@ -16,9 +16,12 @@ import type { QuestStatus } from "../../lib.js";
 import {
 	getQuestSummaries,
 	getQuestDetail,
+	getPausedRuns,
+	formatPausedRunLabel,
 	readArtifactFile,
 	type QuestSummary,
 } from "./data.js";
+import { discardRun, forceCompleteRun } from "./dashboard-actions.js";
 import { renderStagePipeline } from "./stage-pipeline.js";
 
 type ViewMode = "detail" | "markdown";
@@ -146,6 +149,12 @@ export class QuestDashboard implements Component {
 			// Number keys open artifacts 1-7
 			const artifactIndex = parseInt(data, 10) - 1;
 			this.openArtifact(artifactIndex);
+		} else if (data === "d") {
+			// ADR 014 Discard action on the first paused run for the selected quest.
+			void this.discardSelectedPausedRun().then(() => this.refreshData());
+		} else if (data === "f") {
+			// ADR 014 Force-Complete action on the first paused run.
+			void this.forceCompleteSelectedPausedRun().then(() => this.refreshData());
 		} else if (matchesKey(data, Key.pageUp)) {
 			this.rightScrollOffset = Math.max(0, this.rightScrollOffset - 5);
 			this.invalidate();
@@ -170,6 +179,56 @@ export class QuestDashboard implements Component {
 		saveCurrentState(this.ctx.cwd, { currentQuestId: questId });
 		this.ctx.ui.notify(`Active quest set to '${questId}'`, "info");
 		this.refreshData();
+	}
+
+	/**
+	 * Discard the oldest paused run on the currently selected quest.
+	 *
+	 * Exposed as a public method (rather than a private bound action) so the
+	 * `d` key binding and tests can drive it without re-deriving the run target.
+	 */
+	async discardSelectedPausedRun(): Promise<void> {
+		const quest = this.quests[this.selectedIndex];
+		if (!quest) return;
+		const paused = getPausedRuns(this.ctx.cwd, quest.id);
+		const target = paused[0];
+		if (!target) return;
+		try {
+			await discardRun({ cwd: this.ctx.cwd, questId: quest.id, runId: target.runId });
+			this.ctx.ui.notify(`Discarded run ${target.runId}`, "info");
+		} catch (err) {
+			this.ctx.ui.notify(
+				`Discard failed: ${err instanceof Error ? err.message : String(err)}`,
+				"error",
+			);
+		}
+	}
+
+	/**
+	 * Force-Complete the oldest paused run on the currently selected quest.
+	 *
+	 * On merge conflict the run stays paused and a halt-tier anomaly is logged
+	 * (see {@link forceCompleteRun}).
+	 */
+	async forceCompleteSelectedPausedRun(): Promise<void> {
+		const quest = this.quests[this.selectedIndex];
+		if (!quest) return;
+		const paused = getPausedRuns(this.ctx.cwd, quest.id);
+		const target = paused[0];
+		if (!target) return;
+		try {
+			await forceCompleteRun({
+				cwd: this.ctx.cwd,
+				questId: quest.id,
+				runId: target.runId,
+			});
+			this.ctx.ui.notify(`Force-completed run ${target.runId}`, "info");
+		} catch (err) {
+			this.ctx.ui.notify(
+				`Force-complete failed: ${err instanceof Error ? err.message : String(err)}`,
+				"error",
+			);
+		}
 	}
 
 	private openArtifact(index: number) {
@@ -342,15 +401,31 @@ export class QuestDashboard implements Component {
 					? t.fg("success", "✓")
 					: run.status === "running"
 						? t.fg("warning", "⟳")
-						: t.fg("error", "✗");
+						: run.status === "paused"
+							? t.fg("warning", "⏸")
+							: t.fg("error", "✗");
 				const info = `${run.workItemId} • ${run.status}`;
 				lines.push(`  ${icon} ${truncateToWidth(info, width - 6)}`);
 			}
 		}
 		lines.push("");
 
+		// Paused Runs (ADR 014) — separate row variant with action hints. Resume
+		// (M4-4) deliberately omitted; only Discard / Force-Complete are wired.
+		const paused = getPausedRuns(this.ctx.cwd, quest.id);
+		if (paused.length > 0) {
+			lines.push(t.fg("accent", t.bold("Paused Runs")));
+			for (const run of paused) {
+				const label = formatPausedRunLabel(run.paused_at, run.paused_reason);
+				const head = `  ${t.fg("warning", "⏸")} ${run.workItemId} • ${label}`;
+				lines.push(truncateToWidth(head, width));
+				lines.push(t.dim(`      [d] Discard  [f] Force-Complete`));
+			}
+			lines.push("");
+		}
+
 		// Footer hint
-		lines.push(t.dim("↑↓ navigate • enter select quest • 1-7 view artifact • esc close"));
+		lines.push(t.dim("↑↓ navigate • enter select quest • 1-7 view artifact • d/f act on paused • esc close"));
 
 		return lines;
 	}

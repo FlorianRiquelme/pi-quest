@@ -721,6 +721,9 @@ function parseRunWorktreePath(p: string): { questId: string; runId: string } | u
  *   - the `runs/<runId>.json` summary is missing, OR
  *   - the summary's status is `orphaned`, `cancelled`, `failed`, or `completed`.
  *
+ * Paused runs (ADR 014) keep their worktree — Resume (M4-4) and the dashboard
+ * Discard/Force-Complete actions need the worktree intact.
+ *
  * Running runs are kept (their work is in flight). The main-checkout worktree
  * — anything that does not match the `.pi/quests/<id>/worktrees/<runId>`
  * layout — is ignored unconditionally.

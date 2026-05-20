@@ -31,7 +31,7 @@ export interface BackgroundRunSummary {
 	questId: string;
 	workItemId: string;
 	agentName: string;
-	status: "running" | "completed" | "failed" | "cancelled" | "orphaned";
+	status: "running" | "completed" | "failed" | "cancelled" | "orphaned" | "paused";
 	startedAt: string;
 	updatedAt: string;
 	completedAt?: string;
@@ -48,4 +48,8 @@ export interface BackgroundRunSummary {
 	runBranch?: string;
 	/** Quest Branch this run targets (e.g. `quest/<questId>`). */
 	questBranch?: string;
+	/** ADR 014: when the supervisor SIGTERM'd this run on a pause-tier anomaly. */
+	paused_at?: string;
+	/** ADR 014: which pause-tier rule fired (e.g. `lockfile_drift`). */
+	paused_reason?: "lockfile_drift" | "unbounded_diff" | "heartbeat_missed";
 }

@@ -23,7 +23,7 @@ export interface WorkItemInfo {
 	fileName: string;
 	filePath: string;
 	hasReport: boolean;
-	latestRunStatus?: "running" | "completed" | "failed" | "cancelled" | "orphaned";
+	latestRunStatus?: "running" | "completed" | "failed" | "cancelled" | "orphaned" | "paused";
 }
 
 export interface ArtifactInfo {
@@ -126,6 +126,40 @@ export function getQuestDetail(cwd: string, questId: string): QuestDetail | unde
 	const recentRuns = listRunSummaries(qDir).slice(-3).reverse();
 
 	return { workflow, workItems, artifacts, recentRuns };
+}
+
+/**
+ * Return all paused runs (ADR 014) for a quest, oldest-first by `paused_at`.
+ *
+ * A paused run carries `status: "paused"` along with `paused_at` and
+ * `paused_reason`. The dashboard surfaces these as a separate row variant with
+ * Discard / Force-Complete actions (Resume is M4-4).
+ */
+export function getPausedRuns(cwd: string, questId: string) {
+	const runs = listRunSummaries(questDirPath(cwd, questId));
+	return runs
+		.filter((r) => r.status === "paused")
+		.sort((a, b) =>
+			(a.paused_at ?? a.updatedAt).localeCompare(b.paused_at ?? b.updatedAt),
+		);
+}
+
+/**
+ * Format the "Paused: <rule> (Xm Ys)" label used in the dashboard row.
+ *
+ * Returns "Paused: <rule>" when no `paused_at` is recorded (defensive).
+ */
+export function formatPausedRunLabel(
+	pausedAt: string | undefined,
+	pausedReason: string | undefined,
+	now: number = Date.now(),
+): string {
+	const reason = pausedReason ?? "unknown";
+	if (!pausedAt) return `Paused: ${reason}`;
+	const elapsed = Math.max(0, Math.floor((now - new Date(pausedAt).getTime()) / 1000));
+	const m = Math.floor(elapsed / 60);
+	const s = elapsed % 60;
+	return `Paused: ${reason} (${m}m${s.toString().padStart(2, "0")}s)`;
 }
 
 export function countRunningWorkItems(cwd: string, questId: string): number {

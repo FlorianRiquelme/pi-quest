@@ -14,6 +14,8 @@ import {
   getTotalWorkItems,
   readArtifactFile,
   readQuestEvents,
+  getPausedRuns,
+  formatPausedRunLabel,
 } from './data.js';
 
 describe('UI data layer', () => {
@@ -169,5 +171,58 @@ describe('UI data layer', () => {
     const summaries = getQuestSummaries(cwd);
     // Should not include bad quest, should not crash
     expect(summaries.every(q => q.id !== 'bad-quest')).toBe(true);
+  });
+
+  /* ============================== Paused runs (M3-3) ============================== */
+
+  describe('getPausedRuns', () => {
+    it('returns only paused runs, sorted by paused_at ascending', () => {
+      vol.writeFileSync(`${cwd}/.pi/quests/active-quest/runs/003.json`, JSON.stringify({
+        runId: 'r3', questId: 'active-quest', workItemId: '003',
+        agentName: 'quest-implementation', status: 'paused',
+        startedAt: '2026-05-19T17:00:00.000Z', updatedAt: '2026-05-19T17:25:00.000Z',
+        paused_at: '2026-05-19T17:25:00.000Z', paused_reason: 'unbounded_diff',
+        stdoutPath: '/dev/null', stderrPath: '/dev/null',
+        reportPath: '/dev/null', statusPath: '/dev/null',
+      }));
+      vol.writeFileSync(`${cwd}/.pi/quests/active-quest/runs/004.json`, JSON.stringify({
+        runId: 'r4', questId: 'active-quest', workItemId: '004',
+        agentName: 'quest-implementation', status: 'paused',
+        startedAt: '2026-05-19T17:10:00.000Z', updatedAt: '2026-05-19T17:30:00.000Z',
+        paused_at: '2026-05-19T17:30:00.000Z', paused_reason: 'lockfile_drift',
+        stdoutPath: '/dev/null', stderrPath: '/dev/null',
+        reportPath: '/dev/null', statusPath: '/dev/null',
+      }));
+      const paused = getPausedRuns(cwd, 'active-quest');
+      expect(paused).toHaveLength(2);
+      expect(paused[0].runId).toBe('r3');
+      expect(paused[1].runId).toBe('r4');
+    });
+
+    it('returns [] when no runs are paused', () => {
+      expect(getPausedRuns(cwd, 'active-quest')).toEqual([]);
+    });
+  });
+
+  describe('formatPausedRunLabel', () => {
+    it('formats reason and elapsed time', () => {
+      const now = Date.parse('2026-05-19T17:35:23.000Z');
+      const pausedAt = '2026-05-19T17:30:00.000Z';
+      expect(formatPausedRunLabel(pausedAt, 'heartbeat_missed', now)).toBe(
+        'Paused: heartbeat_missed (5m23s)',
+      );
+    });
+
+    it('handles missing paused_at by omitting the timer', () => {
+      expect(formatPausedRunLabel(undefined, 'lockfile_drift', Date.now())).toBe(
+        'Paused: lockfile_drift',
+      );
+    });
+
+    it('defends against missing reason', () => {
+      const now = Date.parse('2026-05-19T17:30:30.000Z');
+      const pausedAt = '2026-05-19T17:30:00.000Z';
+      expect(formatPausedRunLabel(pausedAt, undefined, now)).toBe('Paused: unknown (0m30s)');
+    });
   });
 });

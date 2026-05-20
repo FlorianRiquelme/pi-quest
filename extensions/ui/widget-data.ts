@@ -67,17 +67,16 @@ export function collectWidgetSnapshot(cwd: string, now: number): WidgetSnapshot 
 				lastRetrySignalAt = ts;
 			}
 		} else if (e.event === 'anomaly_detected' && e.tier === 'pause') {
-			// Pause-tier anomaly produces a paused run. M3-3 will encode this on the
-			// run summary; until then the event log is the source of truth.
+			// Pause-tier anomaly produces a paused run (ADR 014). The event log
+			// and the run summary are both sources of truth; we check both.
 			hasPausedRun = true;
 		}
 	}
 
 	// Also surface paused runs from the run summary if any run carries an
-	// explicit `paused` status (M3-3 will add this to BackgroundRunSummary;
-	// for now we tolerate undefined gracefully).
+	// explicit `paused` status (ADR 014 / M3-3).
 	for (const r of runs) {
-		if ((r as { status?: string }).status === 'paused') {
+		if (r.status === 'paused') {
 			hasPausedRun = true;
 		}
 	}

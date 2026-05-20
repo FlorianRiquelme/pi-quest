@@ -166,32 +166,13 @@ export function assembleWidgetLines(
 		}
 	}
 
-	const detailJoined = detailParts.join(opts.theme.fg('dim', '  •  '));
-
-	let clocks = '';
 	if (snapshot.showClocks) {
-		clocks = opts.theme.fg('dim', formatTwoClocks(snapshot.wallMs, snapshot.computeMs));
+		detailParts.push(
+			opts.theme.fg('dim', formatTwoClocks(snapshot.wallMs, snapshot.computeMs)),
+		);
 	}
 
-	let line2 = glyphPart + detailJoined;
-	if (clocks) {
-		// When there's no detail content (no runs to summarise), put clocks
-		// inline right after the glyph so they're always visible regardless of
-		// terminal width. When detail content exists, right-align clocks so
-		// they sit on the edge with the run summary on the left.
-		if (detailParts.length === 0) {
-			line2 += clocks;
-		} else {
-			const used = visibleWidth(line2);
-			const clocksW = visibleWidth(clocks);
-			const remaining = opts.width - used - clocksW;
-			if (remaining > 1) {
-				line2 += ' '.repeat(remaining) + clocks;
-			} else {
-				// Not enough room — fall back to inline.
-				line2 += opts.theme.fg('dim', '  ') + clocks;
-			}
-		}
-	}
+	const detailJoined = detailParts.join(opts.theme.fg('dim', '  •  '));
+	const line2 = glyphPart + detailJoined;
 	return [line1, truncateToWidth(line2, opts.width)];
 }

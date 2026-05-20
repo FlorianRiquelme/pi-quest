@@ -145,8 +145,8 @@ export class QuestDashboard implements Component {
 				// Fire-and-forget async selection
 				void this.selectQuest(quest.id);
 			}
-		} else if (data >= "1" && data <= "7") {
-			// Number keys open artifacts 1-7
+		} else if (data >= "1" && data <= "8") {
+			// Number keys open artifacts 1-8 (Brief is #8 — M4-1).
 			const artifactIndex = parseInt(data, 10) - 1;
 			this.openArtifact(artifactIndex);
 		} else if (data === "d") {
@@ -425,7 +425,7 @@ export class QuestDashboard implements Component {
 		}
 
 		// Footer hint
-		lines.push(t.dim("↑↓ navigate • enter select quest • 1-7 view artifact • d/f act on paused • esc close"));
+		lines.push(t.dim("↑↓ navigate • enter select quest • 1-8 view artifact • d/f act on paused • esc close"));
 
 		return lines;
 	}

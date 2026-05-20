@@ -33,6 +33,12 @@ export interface QuestArtifacts {
 	plan?: string;
 	verification?: string;
 	uat?: string;
+	/**
+	 * Homecoming Brief (ADR 015 / M4-1). Defaults to `"BRIEF.md"` for quests
+	 * created after M4-1; older quests on disk may not have the field set and
+	 * the generator backfills it on first run.
+	 */
+	brief?: string;
 }
 
 /**
@@ -87,6 +93,17 @@ export interface QuestWorkflow {
 
 export interface CurrentQuestState {
 	currentQuestId?: string;
+	/**
+	 * Per-quest pointer to the most recent `events.jsonl` timestamp the user
+	 * has "seen" (i.e. the last time the Homecoming Brief was displayed for
+	 * that quest). Used by the `/quest` auto-display trigger (ADR 015 / M4-1):
+	 * when there are newer events than this pointer for the active quest, the
+	 * Brief regenerates and the pointer advances.
+	 *
+	 * Stored keyed by quest ID so a project can have several active quests
+	 * each with its own homecoming cadence.
+	 */
+	lastSeenEventTimestamp?: Record<string, string>;
 }
 
 export interface QuestConfig {

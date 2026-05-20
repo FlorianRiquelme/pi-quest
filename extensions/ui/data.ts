@@ -100,7 +100,10 @@ export function getQuestDetail(cwd: string, questId: string): QuestDetail | unde
 		}
 	}
 
-	// Artifacts
+	// Artifacts. The Homecoming Brief (M4-1) joins the existing artifact list.
+	// `brief` field on workflow.artifacts is optional; older quests on disk
+	// without it still surface BRIEF.md if the file exists.
+	const briefName = workflow.artifacts.brief ?? "BRIEF.md";
 	const artifactDefs: Array<{ key: string; label: string; fileName?: string }> = [
 		{ key: "handoff", label: "Handoff", fileName: workflow.artifacts.handoff },
 		{ key: "recon", label: "Recon", fileName: workflow.artifacts.recon },
@@ -109,6 +112,7 @@ export function getQuestDetail(cwd: string, questId: string): QuestDetail | unde
 		{ key: "plan", label: "Plan", fileName: workflow.artifacts.plan },
 		{ key: "verification", label: "Verification", fileName: workflow.artifacts.verification },
 		{ key: "uat", label: "UAT", fileName: workflow.artifacts.uat },
+		{ key: "brief", label: "Homecoming Brief", fileName: briefName },
 	];
 
 	const artifacts: ArtifactInfo[] = artifactDefs.map((def) => {

@@ -855,6 +855,55 @@ describe('agents', () => {
       );
     });
 
+    it('merges a resumed Run (with continues_from) using the same Run Branch — chain support (M4-4)', async () => {
+      // A run spawned by Resume carries `continues_from`. Its runBranch is the
+      // SAME as the paused predecessor — commits append linearly. The standard
+      // merge path must pick it up exactly like any other completed run.
+      vol.mkdirSync('/project/.pi/quests/q1/runs', { recursive: true });
+      const resumedRun: BackgroundRunSummary = {
+        runId: 'r-resumed',
+        questId: 'q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        status: 'completed',
+        startedAt: '2024-01-01T13:00:00Z',
+        updatedAt: '2024-01-01T13:30:00Z',
+        completedAt: '2024-01-01T13:30:00Z',
+        stdoutPath: '/x',
+        stderrPath: '/y',
+        reportPath: '/z',
+        statusPath: '/project/.pi/quests/q1/runs/r-resumed.json',
+        continues_from: 'r-paused',
+        worktreePath: '/project/.pi/quests/q1/worktrees/r-paused',
+        runBranch: 'quest-run/q1/r-paused',
+        questBranch: 'quest/q1',
+      };
+      vol.writeFileSync('/project/.pi/quests/q1/runs/r-resumed.json', JSON.stringify(resumedRun));
+
+      const worktree = await import('./worktree');
+      (worktree.mergeRunBranchIntoQuest as any).mockResolvedValue({ ok: true });
+
+      await mergeCompletedRun({
+        repoRoot: '/project',
+        questDir: '/project/.pi/quests/q1',
+        questId: 'q1',
+        runId: 'r-resumed',
+        workItemId: '001',
+        runBranch: 'quest-run/q1/r-paused', // same as the paused predecessor
+        questBranch: 'quest/q1',
+        worktreePath: '/project/.pi/quests/q1/worktrees/r-paused',
+      });
+
+      expect(worktree.mergeRunBranchIntoQuest).toHaveBeenCalledWith({
+        repoRoot: '/project',
+        questBranch: 'quest/q1',
+        runBranch: 'quest-run/q1/r-paused',
+      });
+      expect(worktree.removeRunWorktree).toHaveBeenCalledWith(
+        '/project/.pi/quests/q1/worktrees/r-paused',
+      );
+    });
+
     it('emits anomaly_detected (tier: halt, rule: merge_conflict) on merge failure', async () => {
       vol.mkdirSync('/project/.pi/quests/q1/runs', { recursive: true });
       const runSummary: BackgroundRunSummary = {

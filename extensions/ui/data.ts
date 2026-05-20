@@ -137,7 +137,8 @@ export function getQuestDetail(cwd: string, questId: string): QuestDetail | unde
  *
  * A paused run carries `status: "paused"` along with `paused_at` and
  * `paused_reason`. The dashboard surfaces these as a separate row variant with
- * Discard / Force-Complete actions (Resume is M4-4).
+ * three equal-weight actions: Resume / Discard / Force-Complete (M4-4 / ADR 017
+ * landed Resume; M3-3 wired the other two).
  */
 export function getPausedRuns(cwd: string, questId: string) {
 	const runs = listRunSummaries(questDirPath(cwd, questId));

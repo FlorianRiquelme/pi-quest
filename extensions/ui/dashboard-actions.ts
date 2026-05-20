@@ -1,15 +1,20 @@
 /**
- * Dashboard actions on Paused Runs (ADR 014 §4, M3-3).
+ * Dashboard actions on Paused Runs (ADR 014 §4, M3-3 + M4-4 / ADR 017).
  *
- * Resume is M4-4 — only Discard and Force-Complete are wired here.
+ * The three actions are intentionally presented as equal-weight choices to
+ * the user — different anomalies call for different resolutions; the UI
+ * doesn't recommend.
  *
+ *   - **Resume** (M4-4) — spawn a new Run with a continuation packet in the
+ *     paused Run's worktree, on the same Run Branch. Acknowledgment text is
+ *     required (empty allowed with default fallback).
  *   - **Discard** — reap the worktree, mark the run `cancelled`, don't merge.
  *   - **Force-Complete** — merge the Run Branch into the Quest Branch as-is,
  *     mark the run `completed`, then reap the worktree.
  *
- * Both helpers refuse to operate on a run that is not in `paused` status —
- * the dashboard should only expose them for paused rows, but the gate is here
- * to keep the contract honest.
+ * All three helpers refuse to operate on a run that is not in `paused` status
+ * — the dashboard should only expose them for paused rows, but the gate is
+ * here to keep the contract honest.
  */
 
 import * as fs from "node:fs";
@@ -17,6 +22,7 @@ import * as path from "node:path";
 
 import { validateEvent } from "./../events.js";
 import { ensureDir, readJsonIfExists, writeJson } from "./../fs-utils.js";
+import { resumeRun } from "./../resume.js";
 import { mergeRunBranchIntoQuest, removeRunWorktree } from "./../worktree.js";
 import type { BackgroundRunSummary } from "./../types.js";
 
@@ -147,4 +153,30 @@ export async function forceCompleteRun(opts: ActionOptions): Promise<void> {
 		},
 	});
 	fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+}
+
+/**
+ * Resume a Paused Run: spawn a new Run with a continuation packet in the
+ * paused Run's worktree, on the same Run Branch.
+ *
+ * The acknowledgment is forwarded to {@link resumeRun}, which embeds it into
+ * the packet section 2 and the `run_resumed` audit event. Empty input is
+ * accepted; the default fallback text is applied inside `resumeRun`.
+ */
+export async function resumeRunAction(opts: ActionOptions & { acknowledgment: string }): Promise<void> {
+	const summary = loadPausedSummary(opts);
+	if (!summary) {
+		throw new Error(`resumeRunAction: run ${opts.runId} not found.`);
+	}
+	if (summary.status !== "paused") {
+		throw new Error(
+			`resumeRunAction: run ${opts.runId} is not paused (status=${summary.status}).`,
+		);
+	}
+	await resumeRun({
+		cwd: opts.cwd,
+		questId: opts.questId,
+		pausedRunId: opts.runId,
+		acknowledgment: opts.acknowledgment,
+	});
 }

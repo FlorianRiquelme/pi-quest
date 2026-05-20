@@ -21,7 +21,7 @@ import {
 	readArtifactFile,
 	type QuestSummary,
 } from "./data.js";
-import { discardRun, forceCompleteRun } from "./dashboard-actions.js";
+import { discardRun, forceCompleteRun, resumeRunAction } from "./dashboard-actions.js";
 import { renderStagePipeline } from "./stage-pipeline.js";
 
 type ViewMode = "detail" | "markdown";
@@ -155,6 +155,13 @@ export class QuestDashboard implements Component {
 		} else if (data === "f") {
 			// ADR 014 Force-Complete action on the first paused run.
 			void this.forceCompleteSelectedPausedRun().then(() => this.refreshData());
+		} else if (data === "r") {
+			// ADR 017 / M4-4: Resume action on the first paused run.
+			// The dashboard surface has no inline text input primitive — the
+			// acknowledgment is supplied via the CLI `/quest resume <id> --note "..."`.
+			// Pressing `r` here triggers a resume with the fallback acknowledgment
+			// text and notifies the user.
+			void this.resumeSelectedPausedRun().then(() => this.refreshData());
 		} else if (matchesKey(data, Key.pageUp)) {
 			this.rightScrollOffset = Math.max(0, this.rightScrollOffset - 5);
 			this.invalidate();
@@ -199,6 +206,39 @@ export class QuestDashboard implements Component {
 		} catch (err) {
 			this.ctx.ui.notify(
 				`Discard failed: ${err instanceof Error ? err.message : String(err)}`,
+				"error",
+			);
+		}
+	}
+
+	/**
+	 * Resume the oldest paused run on the currently selected quest with the
+	 * default fallback acknowledgment ("User chose to resume without comment").
+	 *
+	 * The dashboard surface has no inline text input primitive — users who want
+	 * to attach a free-form note should use `/quest resume <runId> --note "..."`.
+	 * Pressing `r` here is the equivalent of "resume without comment".
+	 */
+	async resumeSelectedPausedRun(): Promise<void> {
+		const quest = this.quests[this.selectedIndex];
+		if (!quest) return;
+		const paused = getPausedRuns(this.ctx.cwd, quest.id);
+		const target = paused[0];
+		if (!target) return;
+		try {
+			await resumeRunAction({
+				cwd: this.ctx.cwd,
+				questId: quest.id,
+				runId: target.runId,
+				acknowledgment: "",
+			});
+			this.ctx.ui.notify(
+				`Resumed run ${target.runId}. Add a note via /quest resume ${target.runId} --note "..." next time.`,
+				"info",
+			);
+		} catch (err) {
+			this.ctx.ui.notify(
+				`Resume failed: ${err instanceof Error ? err.message : String(err)}`,
 				"error",
 			);
 		}
@@ -410,8 +450,9 @@ export class QuestDashboard implements Component {
 		}
 		lines.push("");
 
-		// Paused Runs (ADR 014) — separate row variant with action hints. Resume
-		// (M4-4) deliberately omitted; only Discard / Force-Complete are wired.
+		// Paused Runs (ADR 014 + ADR 017 / M4-4) — separate row variant with the
+		// three equal-weight action buttons. Resume / Discard / Force-Complete
+		// share a single row and identical styling so the UI never recommends.
 		const paused = getPausedRuns(this.ctx.cwd, quest.id);
 		if (paused.length > 0) {
 			lines.push(t.fg("accent", t.bold("Paused Runs")));
@@ -419,13 +460,13 @@ export class QuestDashboard implements Component {
 				const label = formatPausedRunLabel(run.paused_at, run.paused_reason);
 				const head = `  ${t.fg("warning", "⏸")} ${run.workItemId} • ${label}`;
 				lines.push(truncateToWidth(head, width));
-				lines.push(t.dim(`      [d] Discard  [f] Force-Complete`));
+				lines.push(t.dim(`      [r] Resume   [d] Discard   [f] Force-Complete`));
 			}
 			lines.push("");
 		}
 
 		// Footer hint
-		lines.push(t.dim("↑↓ navigate • enter select quest • 1-8 view artifact • d/f act on paused • esc close"));
+		lines.push(t.dim("↑↓ navigate • enter select quest • 1-8 view artifact • d/f/r act on paused • esc close"));
 
 		return lines;
 	}

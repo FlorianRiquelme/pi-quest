@@ -781,4 +781,96 @@ describe('commands', () => {
       expect(wf.artifacts.brief).toBe('BRIEF.md');
     });
   });
+
+  describe('cmdResume (M4-4)', () => {
+    beforeEach(async () => {
+      vi.resetModules();
+    });
+
+    it('warns when no runId is supplied', async () => {
+      vi.doMock('./resume.js', () => ({
+        resumeRun: vi.fn(),
+      }));
+      const { cmdResume } = await import('./commands');
+      const ctx = mockCtx('/project');
+      await cmdResume(ctx, []);
+      expect(notifyCalls.find((c) => c.level === 'warning')).toBeDefined();
+    });
+
+    it('calls resumeRun with empty acknowledgment when --note is not supplied', async () => {
+      const resumeFn = vi.fn().mockResolvedValue({
+        newRunId: 'new-run',
+        worktreePath: '/wt',
+        runBranch: 'quest-run/q1/r-paused',
+        continuationPacket: '## Continuation',
+      });
+      vi.doMock('./resume.js', () => ({
+        resumeRun: resumeFn,
+      }));
+      const { cmdResume } = await import('./commands');
+      const ctx = mockCtx('/project');
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1', title: 'Q', status: 'executing',
+          createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+          source: {}, artifacts: { handoff: 'H.md' },
+        }),
+      });
+      await cmdResume(ctx, ['r-paused']);
+      expect(resumeFn).toHaveBeenCalledWith({
+        cwd: '/project',
+        questId: 'q1',
+        pausedRunId: 'r-paused',
+        acknowledgment: '',
+      });
+    });
+
+    it('passes the --note value through to resumeRun verbatim', async () => {
+      const resumeFn = vi.fn().mockResolvedValue({
+        newRunId: 'new-run',
+        worktreePath: '/wt',
+        runBranch: 'quest-run/q1/r-paused',
+        continuationPacket: '## Continuation',
+      });
+      vi.doMock('./resume.js', () => ({
+        resumeRun: resumeFn,
+      }));
+      const { cmdResume } = await import('./commands');
+      const ctx = mockCtx('/project');
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1', title: 'Q', status: 'executing',
+          createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+          source: {}, artifacts: { handoff: 'H.md' },
+        }),
+      });
+      await cmdResume(ctx, ['r-paused', '--note', 'the lockfile drift is fine']);
+      expect(resumeFn).toHaveBeenCalledWith({
+        cwd: '/project',
+        questId: 'q1',
+        pausedRunId: 'r-paused',
+        acknowledgment: 'the lockfile drift is fine',
+      });
+    });
+
+    it('surfaces failures via ctx.ui.notify(error) and does not throw', async () => {
+      vi.doMock('./resume.js', () => ({
+        resumeRun: vi.fn().mockRejectedValue(new Error('not paused')),
+      }));
+      const { cmdResume } = await import('./commands');
+      const ctx = mockCtx('/project');
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1', title: 'Q', status: 'executing',
+          createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+          source: {}, artifacts: { handoff: 'H.md' },
+        }),
+      });
+      await expect(cmdResume(ctx, ['r-paused'])).resolves.toBeUndefined();
+      expect(notifyCalls.find((c) => c.level === 'error')).toBeDefined();
+    });
+  });
 });

@@ -532,6 +532,53 @@ export async function cmdIntake(ctx: CommandContext, args: string[]) {
 	);
 }
 
+/**
+ * `/quest resume <runId> [--note "..."]` — spawn a new Run that continues a
+ * Paused Run (ADR 017 / M4-4).
+ *
+ * The active quest in `state.json` is used to resolve which quest owns the
+ * paused run. Empty `--note` (or its absence) is forwarded as the empty string;
+ * `resumeRun` applies the default fallback acknowledgment text.
+ */
+export async function cmdResume(ctx: CommandContext, args: string[]) {
+	const runId = args[0];
+	if (!runId) {
+		ctx.ui.notify(
+			'Usage: /quest resume <runId> [--note "acknowledgment text"]',
+			"warning",
+		);
+		return;
+	}
+	const state = loadCurrentState(ctx.cwd);
+	if (!state.currentQuestId) {
+		ctx.ui.notify("No active quest. Use /quest select <id> first.", "warning");
+		return;
+	}
+	const noteIdx = args.indexOf("--note");
+	const note = noteIdx >= 0 && args[noteIdx + 1] !== undefined ? args[noteIdx + 1] : "";
+	try {
+		// Dynamic import avoids pulling resume.ts into the bundle when the
+		// command isn't used; it also matches the pattern other modules
+		// (e.g. dashboard-opener) use for lazy wiring.
+		const { resumeRun } = await import("./resume.js");
+		const result = await resumeRun({
+			cwd: ctx.cwd,
+			questId: state.currentQuestId,
+			pausedRunId: runId,
+			acknowledgment: note,
+		});
+		ctx.ui.notify(
+			`Resumed: new run ${result.newRunId} continues ${runId} on ${result.runBranch}.`,
+			"info",
+		);
+	} catch (err) {
+		ctx.ui.notify(
+			`Resume failed: ${err instanceof Error ? err.message : String(err)}`,
+			"error",
+		);
+	}
+}
+
 export async function cmdDashboard(ctx: CommandContext) {
 	const { openDashboard } = await import("./ui/dashboard-opener.js");
 	await openDashboard(ctx);

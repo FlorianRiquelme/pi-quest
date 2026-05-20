@@ -203,5 +203,32 @@ describe('QuestDashboard', () => {
       );
       expect(updated.status).toBe('completed');
     });
+
+    /* ============================ Resume (M4-4 / ADR 017) ============================ */
+
+    it('renders the Paused Run action row with Resume, Discard, and Force-Complete in equal-weight styling', () => {
+      const dashboard = new QuestDashboard(mockCtx, mockTheme, () => {});
+      dashboard.setVisibleRows(40);
+      const lines = dashboard.render(120);
+      const joined = lines.join('\n');
+      // The three actions render together; mockTheme.dim is identity so the raw
+      // bracket markers should all show up on the same row.
+      expect(joined).toContain('[r] Resume');
+      expect(joined).toContain('[d] Discard');
+      expect(joined).toContain('[f] Force-Complete');
+      // Single line, same prefix indent → equal-weight rendering.
+      const actionLine = lines.find(
+        (l) => l.includes('[r] Resume') && l.includes('[d] Discard') && l.includes('[f] Force-Complete'),
+      );
+      expect(actionLine).toBeDefined();
+    });
+
+    it('footer hint advertises r/d/f as the paused-run action keys', () => {
+      const dashboard = new QuestDashboard(mockCtx, mockTheme, () => {});
+      dashboard.setVisibleRows(40);
+      const lines = dashboard.render(120);
+      const joined = lines.join('\n');
+      expect(joined).toContain('d/f/r act on paused');
+    });
   });
 });

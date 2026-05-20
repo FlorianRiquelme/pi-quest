@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { fs, vol } from "memfs";
-import { discardRun, forceCompleteRun } from "./dashboard-actions.js";
+import { discardRun, forceCompleteRun, resumeRunAction } from "./dashboard-actions.js";
 import type { BackgroundRunSummary } from "../types.js";
 
 vi.mock("node:fs", async () => {
@@ -17,6 +17,15 @@ vi.mock("node:fs", async () => {
 vi.mock("../worktree.js", () => ({
 	removeRunWorktree: vi.fn().mockResolvedValue(undefined),
 	mergeRunBranchIntoQuest: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+vi.mock("../resume.js", () => ({
+	resumeRun: vi.fn().mockResolvedValue({
+		newRunId: 'new-run-id',
+		worktreePath: '/project/.pi/quests/q1/worktrees/r-paused',
+		runBranch: 'quest-run/q1/r-paused',
+		continuationPacket: '## Continuation',
+	}),
 }));
 
 function seedPausedRun(): BackgroundRunSummary {
@@ -218,6 +227,84 @@ describe("forceCompleteRun", () => {
 		);
 		await expect(
 			forceCompleteRun({ cwd: "/project", questId: "q1", runId: "r-live" }),
+		).rejects.toThrow(/paused/i);
+	});
+});
+
+/* ============================ resumeRunAction (M4-4) ============================ */
+
+describe("resumeRunAction", () => {
+	beforeEach(async () => {
+		vol.reset();
+		const resumeMod = await import("../resume.js");
+		(resumeMod.resumeRun as any).mockClear().mockResolvedValue({
+			newRunId: 'new-run-id',
+			worktreePath: '/project/.pi/quests/q1/worktrees/r-paused',
+			runBranch: 'quest-run/q1/r-paused',
+			continuationPacket: '## Continuation',
+		});
+	});
+
+	it("calls resumeRun with the supplied acknowledgment", async () => {
+		seedPausedRun();
+		const resumeMod = await import("../resume.js");
+		await resumeRunAction({
+			cwd: "/project",
+			questId: "q1",
+			runId: "r-paused",
+			acknowledgment: "the lockfile drift is fine",
+		});
+		expect(resumeMod.resumeRun).toHaveBeenCalledWith({
+			cwd: "/project",
+			questId: "q1",
+			pausedRunId: "r-paused",
+			acknowledgment: "the lockfile drift is fine",
+		});
+	});
+
+	it("passes an empty acknowledgment through unchanged (default text is applied inside resumeRun)", async () => {
+		seedPausedRun();
+		const resumeMod = await import("../resume.js");
+		await resumeRunAction({
+			cwd: "/project",
+			questId: "q1",
+			runId: "r-paused",
+			acknowledgment: "",
+		});
+		expect(resumeMod.resumeRun).toHaveBeenCalledWith({
+			cwd: "/project",
+			questId: "q1",
+			pausedRunId: "r-paused",
+			acknowledgment: "",
+		});
+	});
+
+	it("refuses when the run is not paused", async () => {
+		const running: BackgroundRunSummary = {
+			runId: "r-live",
+			questId: "q1",
+			workItemId: "001",
+			agentName: "quest-implementation",
+			status: "running",
+			startedAt: "2026-05-19T12:00:00.000Z",
+			updatedAt: "2026-05-19T12:00:00.000Z",
+			stdoutPath: "/x",
+			stderrPath: "/y",
+			reportPath: "/z",
+			statusPath: "/project/.pi/quests/q1/runs/r-live.json",
+		};
+		vol.mkdirSync("/project/.pi/quests/q1/runs", { recursive: true });
+		vol.writeFileSync(
+			"/project/.pi/quests/q1/runs/r-live.json",
+			JSON.stringify(running),
+		);
+		await expect(
+			resumeRunAction({
+				cwd: "/project",
+				questId: "q1",
+				runId: "r-live",
+				acknowledgment: "go",
+			}),
 		).rejects.toThrow(/paused/i);
 	});
 });

@@ -1,8 +1,9 @@
 /**
- * Typed Quest event union — see ADR 010, extended by ADR 013 (M3-2).
+ * Typed Quest event union — see ADR 010, extended by ADR 013 (M3-2) and
+ * ADR 017 (M4-4).
  *
  * Every event written to `.pi/quests/<id>/telemetry/events.jsonl` matches one of
- * the eleven variants below. The `event` field is the discriminator
+ * the twelve variants below. The `event` field is the discriminator
  * (snake_case on the wire). Every variant carries `timestamp` (ISO 8601),
  * `questId`, and an optional open `details` slot for forward-compatible extras.
  *
@@ -11,6 +12,9 @@
  * additional audit events — `freeze_engaged` and `freeze_released` — that
  * deserve top-level treatment because they carry structural fields (mode,
  * in_flight_runs, triggered_by) consumed by the widget and homecoming brief.
+ * ADR 017 (Resume mechanic) adds `run_resumed`, whose `new_run_id`,
+ * `continues_from`, and `acknowledgment` are the audit signal for "user
+ * acknowledged the paused anomaly and asked the agent to continue".
  *
  * The event log is an audit record — readers consult it for postmortem,
  * anomaly detection, and narrative composition, never for current state.
@@ -153,6 +157,29 @@ const FreezeReleasedEvent = Type.Object({
 	details: DetailsField,
 });
 
+// ADR 017 §5 — Resume mechanic audit event. Emitted at Resume time, paired with
+// a standard `run_started` for the new Run immediately after. `new_run_id` is
+// the freshly-spawned Run; `continues_from` references the immediate
+// predecessor (the just-paused Run, even in a multi-Resume chain);
+// `acknowledgment` is the free-form text the user supplied (or the default
+// fallback `"User chose to resume without comment"`).
+const RunResumedEvent = Type.Object({
+	event: Type.Literal("run_resumed"),
+	timestamp: TimestampField,
+	questId: QuestIdField,
+	new_run_id: Type.String({
+		description: "Run ID of the newly-spawned Run that continues the paused work.",
+	}),
+	continues_from: Type.String({
+		description: "Run ID of the immediate predecessor (the just-paused Run).",
+	}),
+	acknowledgment: Type.String({
+		description:
+			"User-supplied acknowledgment text. Empty input defaults to 'User chose to resume without comment'.",
+	}),
+	details: DetailsField,
+});
+
 /* ================================ Union ================================ */
 
 export const QuestEventSchema = Type.Union([
@@ -167,6 +194,7 @@ export const QuestEventSchema = Type.Union([
 	RescueInvokedEvent,
 	FreezeEngagedEvent,
 	FreezeReleasedEvent,
+	RunResumedEvent,
 ]);
 
 export type QuestEvent = Static<typeof QuestEventSchema>;
@@ -175,7 +203,8 @@ export type QuestEvent = Static<typeof QuestEventSchema>;
  * The event kinds in the Quest typed union, in stable order.
  *
  * The first nine were defined by ADR 010. ADR 013 §8 (Hearth Widget freeze
- * chords) added `freeze_engaged` and `freeze_released`.
+ * chords) added `freeze_engaged` and `freeze_released`. ADR 017 §5 (Resume
+ * mechanic) added `run_resumed`.
  */
 export const QUEST_EVENT_KINDS = [
 	"stage_entered",
@@ -189,6 +218,7 @@ export const QUEST_EVENT_KINDS = [
 	"rescue_invoked",
 	"freeze_engaged",
 	"freeze_released",
+	"run_resumed",
 ] as const;
 
 export type QuestEventKind = (typeof QUEST_EVENT_KINDS)[number];

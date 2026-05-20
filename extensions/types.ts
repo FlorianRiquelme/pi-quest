@@ -52,4 +52,10 @@ export interface BackgroundRunSummary {
 	paused_at?: string;
 	/** ADR 014: which pause-tier rule fired (e.g. `lockfile_drift`). */
 	paused_reason?: "lockfile_drift" | "unbounded_diff" | "heartbeat_missed";
+	/**
+	 * ADR 017: when this run was spawned by Resume, the runId of its **immediate**
+	 * predecessor (the just-paused Run). Multi-Resume chains follow this back
+	 * one hop at a time, not back to the original.
+	 */
+	continues_from?: string;
 }

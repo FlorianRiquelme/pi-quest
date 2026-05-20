@@ -23,6 +23,7 @@ import {
 	cmdConfig,
 	cmdDashboard,
 	cmdIntake,
+	cmdResume,
 	cmdSelect,
 	cmdSetStatus,
 	listQuests,
@@ -47,14 +48,57 @@ import { startAnomalyPoller } from "./anomaly-poller.js";
 import { handleHardFreezeChord, handleSoftFreezeChord } from "./freeze.js";
 import { setQuestWidget } from "./ui/widget.js";
 
+/**
+ * Tokenize the `/quest` argument string into a positional array, respecting
+ * single- and double-quoted strings so flag values like `--note "lockfile
+ * drift is fine"` survive intact.
+ *
+ * Exported for unit tests.
+ */
+export function tokenizeQuestArgs(args: string): string[] {
+	const tokens: string[] = [];
+	const input = args.trim();
+	let i = 0;
+	while (i < input.length) {
+		const ch = input[i];
+		if (ch === " " || ch === "\t" || ch === "\n") {
+			i++;
+			continue;
+		}
+		if (ch === '"' || ch === "'") {
+			const quote = ch;
+			i++;
+			let value = "";
+			while (i < input.length && input[i] !== quote) {
+				value += input[i];
+				i++;
+			}
+			// Consume the closing quote (silently ignore unterminated quote).
+			if (i < input.length) i++;
+			tokens.push(value);
+			continue;
+		}
+		// Plain token — read until whitespace.
+		let value = "";
+		while (i < input.length && input[i] !== " " && input[i] !== "\t" && input[i] !== "\n") {
+			value += input[i];
+			i++;
+		}
+		tokens.push(value);
+	}
+	return tokens;
+}
+
 export default function piQuestExtension(pi: ExtensionAPI) {
 	/* ================================ Commands ================================ */
 
 	pi.registerCommand("quest", {
 		description:
-			"Quest execution engine. /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|config|dashboard]",
+			"Quest execution engine. /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|resume <runId> [--note \"...\"]|config|dashboard]",
 		handler: async (args, ctx) => {
-			const parts = args.trim().split(/\s+/);
+			// Resume's --note may carry spaces, so we tokenize while keeping
+			// quoted strings together rather than naive split-on-whitespace.
+			const parts = tokenizeQuestArgs(args);
 			const subcommand = parts[0]?.toLowerCase() || "";
 
 			switch (subcommand) {
@@ -85,6 +129,10 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 					await cmdBrief(ctx);
 					setQuestWidget(ctx);
 					break;
+				case "resume":
+					await cmdResume(ctx, parts.slice(1));
+					setQuestWidget(ctx);
+					break;
 				case "config":
 					await cmdConfig(ctx);
 					break;
@@ -97,7 +145,7 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 				default:
 					ctx.ui.notify(`Unknown quest subcommand: ${subcommand}`, "error");
 					ctx.ui.notify(
-						"Usage: /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|config|dashboard]",
+						"Usage: /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|resume <runId> [--note \"...\"]|config|dashboard]",
 						"info",
 					);
 			}

@@ -9,7 +9,7 @@ const ts = '2024-01-01T12:00:00.000Z';
 const questId = 'q1';
 
 describe('QUEST_EVENT_KINDS', () => {
-	it('contains the 9 kinds from ADR 010 plus the 2 freeze kinds added by M3-2 / ADR 013', () => {
+	it('contains the 9 kinds from ADR 010, the 2 freeze kinds from M3-2 / ADR 013, and the run_resumed kind from M4-4 / ADR 017', () => {
 		expect([...QUEST_EVENT_KINDS].sort()).toEqual(
 			[
 				'stage_entered',
@@ -23,6 +23,7 @@ describe('QUEST_EVENT_KINDS', () => {
 				'rescue_invoked',
 				'freeze_engaged',
 				'freeze_released',
+				'run_resumed',
 			].sort(),
 		);
 	});
@@ -146,6 +147,23 @@ describe('validateEvent', () => {
 				questId,
 				triggered_by: 'auto',
 			},
+			{
+				event: 'run_resumed',
+				timestamp: ts,
+				questId,
+				new_run_id: 'run-2',
+				continues_from: 'run-1',
+				acknowledgment: 'lockfile drift is intentional',
+			},
+			{
+				event: 'run_resumed',
+				timestamp: ts,
+				questId,
+				new_run_id: 'run-3',
+				continues_from: 'run-2',
+				acknowledgment: 'User chose to resume without comment',
+				details: { resumption_number: 2 },
+			},
 		];
 
 		for (const sample of samples) {
@@ -220,6 +238,7 @@ describe('validateEvent', () => {
 			{ event: 'rescue_invoked' },
 			{ event: 'freeze_engaged' },
 			{ event: 'freeze_released' },
+			{ event: 'run_resumed' },
 		];
 		for (const s of samples) covered.add(s.event);
 		for (const kind of QUEST_EVENT_KINDS) {
@@ -259,6 +278,42 @@ describe('validateEvent', () => {
 				questId,
 				mode: 'soft',
 				triggered_by: 'user',
+			}),
+		).toThrow();
+	});
+
+	it('rejects run_resumed when new_run_id is missing', () => {
+		expect(() =>
+			validateEvent({
+				event: 'run_resumed',
+				timestamp: ts,
+				questId,
+				continues_from: 'run-1',
+				acknowledgment: 'go',
+			}),
+		).toThrow();
+	});
+
+	it('rejects run_resumed when continues_from is missing', () => {
+		expect(() =>
+			validateEvent({
+				event: 'run_resumed',
+				timestamp: ts,
+				questId,
+				new_run_id: 'run-2',
+				acknowledgment: 'go',
+			}),
+		).toThrow();
+	});
+
+	it('rejects run_resumed when acknowledgment is missing', () => {
+		expect(() =>
+			validateEvent({
+				event: 'run_resumed',
+				timestamp: ts,
+				questId,
+				new_run_id: 'run-2',
+				continues_from: 'run-1',
 			}),
 		).toThrow();
 	});

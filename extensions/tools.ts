@@ -19,6 +19,7 @@ import {
 	runSubagent,
 	startSubagentRun,
 } from "./agents.js";
+import { validateEvent } from "./events.js";
 import type { BackgroundRunSummary, ToolContext } from "./types.js";
 
 /* ================================ Theme helpers ================================ */
@@ -290,14 +291,14 @@ export async function executeQuestRescue(
 
 	const telemetryPath = path.join(questDir, "telemetry", "events.jsonl");
 	ensureDir(path.dirname(telemetryPath));
-	const event = {
+	const event = validateEvent({
+		event: "rescue_invoked",
 		timestamp: new Date().toISOString(),
 		questId: params.questId,
-		event: "rescue_invoked",
 		agentRole: "rescue",
 		workItemId: params.workItemId,
 		status: result.exitCode === 0 ? "completed" : "failed",
-	};
+	});
 	fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
 
 	return {
@@ -406,21 +407,14 @@ export async function executeQuestWriteWorkflow(
 
 /* ================================ quest_telemetry_event ================================ */
 
-export interface QuestTelemetryEventParams {
+/**
+ * The tool accepts any object payload — `validateEvent` is the single source
+ * of truth for whether the payload matches one of the nine ADR-010 variants.
+ */
+export type QuestTelemetryEventParams = {
 	questId: string;
 	event: string;
-	agentRole?: string;
-	workItemId?: string;
-	model?: string;
-	inputTokens?: number;
-	outputTokens?: number;
-	durationMs?: number;
-	status?: string;
-	filesChanged?: string[];
-	commandsRun?: string[];
-	rescueUsed?: boolean;
-	details?: object;
-}
+} & Record<string, unknown>;
 
 export async function executeQuestTelemetryEvent(
 	params: QuestTelemetryEventParams,
@@ -435,13 +429,25 @@ export async function executeQuestTelemetryEvent(
 		};
 	}
 
+	const candidate = {
+		timestamp: new Date().toISOString(),
+		...params,
+	};
+
+	let event;
+	try {
+		event = validateEvent(candidate);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return {
+			content: [{ type: "text" as const, text: `Rejected telemetry event: ${message}` }],
+			isError: true,
+			details: { rejected: candidate, reason: message },
+		};
+	}
+
 	const telemetryPath = path.join(questDir, "telemetry", "events.jsonl");
 	ensureDir(path.dirname(telemetryPath));
-	const event = {
-		timestamp: new Date().toISOString(),
-		questId: params.questId,
-		...Object.fromEntries(Object.entries(params).filter(([k]) => k !== "questId")),
-	};
 	fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
 
 	return {

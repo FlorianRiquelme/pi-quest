@@ -14,6 +14,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
+import { QUEST_EVENT_KINDS } from "./events.js";
 import { getAllQuestIds } from "./state.js";
 import {
 	cmdConfig,
@@ -160,25 +161,41 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "quest_telemetry_event",
 		label: "Quest Telemetry Event",
-		description: "Record a telemetry event for a quest.",
-		promptSnippet: "Log a structured telemetry event to the quest's telemetry/events.jsonl",
-		parameters: Type.Object({
-			questId: Type.String({ description: "Quest ID" }),
-			event: Type.String({ description: "Event type" }),
-			agentRole: Type.Optional(Type.String()),
-			workItemId: Type.Optional(Type.String()),
-			model: Type.Optional(Type.String()),
-			inputTokens: Type.Optional(Type.Number()),
-			outputTokens: Type.Optional(Type.Number()),
-			durationMs: Type.Optional(Type.Number()),
-			status: Type.Optional(Type.String()),
-			filesChanged: Type.Optional(Type.Array(Type.String())),
-			commandsRun: Type.Optional(Type.Array(Type.String())),
-			rescueUsed: Type.Optional(Type.Boolean()),
-			details: Type.Optional(Type.Object({})),
-		}),
+		description:
+			"Record one of the nine typed Quest events (ADR 010) to telemetry/events.jsonl. " +
+			`Allowed event kinds: ${QUEST_EVENT_KINDS.join(", ")}.`,
+		promptSnippet:
+			"Append a typed Quest audit event (stage_entered, run_started, run_finished, run_orphaned, progress_beat, concession, anomaly_detected, launch_gate, rescue_invoked) to telemetry/events.jsonl",
+		parameters: Type.Object(
+			{
+				questId: Type.String({ description: "Quest ID." }),
+				event: Type.String({
+					description: `Event discriminator. Must be one of: ${QUEST_EVENT_KINDS.join(", ")}.`,
+				}),
+				// Variant-specific top-level fields are intentionally typed loosely here;
+				// `validateEvent` is authoritative and rejects shape mismatches at runtime.
+				runId: Type.Optional(Type.String()),
+				workItemId: Type.Optional(Type.String()),
+				from: Type.Optional(Type.String()),
+				to: Type.Optional(Type.String()),
+				phase: Type.Optional(Type.String()),
+				confidence: Type.Optional(Type.Number()),
+				note: Type.Optional(Type.String()),
+				decision: Type.Optional(Type.String()),
+				rationale: Type.Optional(Type.String()),
+				tier: Type.Optional(Type.String()),
+				rule: Type.Optional(Type.String()),
+				should_pause: Type.Optional(Type.Boolean()),
+				outcome: Type.Optional(Type.String()),
+				reasons: Type.Optional(Type.Array(Type.String())),
+				agentRole: Type.Optional(Type.String()),
+				status: Type.Optional(Type.String()),
+				details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+			},
+			{ additionalProperties: false },
+		),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			return executeQuestTelemetryEvent(params, ctx);
+			return executeQuestTelemetryEvent(params as unknown as Parameters<typeof executeQuestTelemetryEvent>[0], ctx);
 		},
 	});
 

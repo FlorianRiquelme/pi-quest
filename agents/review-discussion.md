@@ -27,3 +27,22 @@ Your job:
    - REVIEW.md — review log
    - RESOLVED_HANDOFF.md — clean execution source
 8. Update workflow.json status to "resolved".
+
+## RESOLVED_HANDOFF.md contract (ADR 012 / M2-2)
+
+Every `RESOLVED_HANDOFF.md` MUST contain an `## Acceptance Criteria` section. Each requirement is one bullet labeled `- [R<n>] <requirement text>`, numbered sequentially from `R1`:
+
+```markdown
+## Acceptance Criteria
+
+- [R1] Users can sign in with OAuth.
+- [R2] Failed sign-in surfaces a non-generic error message.
+- [R3] Session expiry triggers a re-auth prompt within 5 seconds.
+```
+
+Downstream the planning agent's work-items reference these labels via `addresses: [R1, R2]`. The Handoff Compiler emits `unaddressed_requirement` (error) when a label has no work-item addressing it. Without this labeled section the compiler cannot reason about coverage.
+
+Keep requirements:
+- Atomic — one observable behaviour per bullet.
+- Testable — phrased as something a reviewer can verify.
+- Stable — re-numbering breaks the compiler's trace, so add new requirements at the end (`R<n+1>`) rather than renumbering.

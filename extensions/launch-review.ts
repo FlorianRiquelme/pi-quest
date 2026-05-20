@@ -120,6 +120,98 @@ export function recordLaunchReviewSignOff(planPath: string): string {
 	return signedOffAt;
 }
 
+/* ================================ Pre-Mortem edits ================================ */
+
+export type PreMortemField = "most_likely_failure" | "detection_signal" | "recovery_plan";
+
+export interface PreMortemEditInput {
+	field: PreMortemField;
+	after: string;
+	/** Defaults to "user". */
+	who?: string;
+}
+
+/**
+ * Record an inline edit to one of the three Pre-Mortem fields.
+ *
+ * - Updates `pre_mortem.<field>` to the new text.
+ * - Appends `{ at, who, field, before, after }` to `pre_mortem_edits` (array).
+ *
+ * The `before` value is read from the existing frontmatter; an empty string is
+ * recorded if the field was absent. Returns the ISO timestamp written so the
+ * caller can echo it back to the user.
+ */
+export function recordPreMortemEdit(planPath: string, edit: PreMortemEditInput): string {
+	const at = new Date().toISOString();
+	const fm = readPlanFrontmatter(planPath);
+
+	const preMortemRaw = fm.pre_mortem;
+	const pm: { [key: string]: FrontmatterValue } =
+		preMortemRaw && typeof preMortemRaw === "object" && !Array.isArray(preMortemRaw)
+			? { ...(preMortemRaw as { [key: string]: FrontmatterValue }) }
+			: {};
+	const before = typeof pm[edit.field] === "string" ? (pm[edit.field] as string) : "";
+	pm[edit.field] = edit.after;
+
+	const editsRaw = fm.pre_mortem_edits;
+	const edits: FrontmatterValue[] = Array.isArray(editsRaw) ? [...editsRaw] : [];
+	edits.push({
+		at,
+		who: edit.who ?? "user",
+		field: edit.field,
+		before,
+		after: edit.after,
+	});
+
+	writePlanFrontmatter(planPath, {
+		pre_mortem: pm,
+		pre_mortem_edits: edits,
+	});
+	return at;
+}
+
+/* ================================ Acknowledged warnings ================================ */
+
+export interface AcknowledgedWarningInput {
+	rule: string;
+	work_item?: string;
+}
+
+/**
+ * Record that the user acknowledged a compiler warning during Launch Review.
+ *
+ * Writes the acknowledgement to `launch_review.acknowledged_warnings` (array)
+ * while preserving any other existing keys under `launch_review`. The Launch
+ * Gate does not consult this list — warnings already pass — but the record is
+ * required by the audit trail (ADR 012 / M2-2 acceptance #10).
+ */
+export function recordAcknowledgedWarning(
+	planPath: string,
+	ack: AcknowledgedWarningInput,
+): string {
+	const acknowledgedAt = new Date().toISOString();
+	const fm = readPlanFrontmatter(planPath);
+
+	const lrRaw = fm.launch_review;
+	const lr: { [key: string]: FrontmatterValue } =
+		lrRaw && typeof lrRaw === "object" && !Array.isArray(lrRaw)
+			? { ...(lrRaw as { [key: string]: FrontmatterValue }) }
+			: {};
+
+	const prevRaw = lr.acknowledged_warnings;
+	const acks: FrontmatterValue[] = Array.isArray(prevRaw) ? [...prevRaw] : [];
+	const entry: { [key: string]: FrontmatterValue } = {
+		rule: ack.rule,
+		acknowledged_at: acknowledgedAt,
+	};
+	if (ack.work_item !== undefined) entry.work_item = ack.work_item;
+	acks.push(entry);
+	lr.acknowledged_warnings = acks;
+
+	writePlanFrontmatter(planPath, { launch_review: lr });
+	return acknowledgedAt;
+}
+
 /* ================================ Launch Gate ================================ */
 
 export type LaunchGateOutcome = "passed" | "blocked" | "force_passed";

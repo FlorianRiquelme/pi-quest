@@ -166,36 +166,34 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 			`Allowed event kinds: ${QUEST_EVENT_KINDS.join(", ")}.`,
 		promptSnippet:
 			"Append a typed Quest audit event (stage_entered, run_started, run_finished, run_orphaned, progress_beat, concession, anomaly_detected, launch_gate, rescue_invoked) to telemetry/events.jsonl",
-		parameters: Type.Object(
-			{
-				questId: Type.String({ description: "Quest ID." }),
-				event: Type.String({
-					description: `Event discriminator. Must be one of: ${QUEST_EVENT_KINDS.join(", ")}.`,
-				}),
-				// Variant-specific top-level fields are intentionally typed loosely here;
-				// `validateEvent` is authoritative and rejects shape mismatches at runtime.
-				runId: Type.Optional(Type.String()),
-				workItemId: Type.Optional(Type.String()),
-				from: Type.Optional(Type.String()),
-				to: Type.Optional(Type.String()),
-				phase: Type.Optional(Type.String()),
-				confidence: Type.Optional(Type.Number()),
-				note: Type.Optional(Type.String()),
-				decision: Type.Optional(Type.String()),
-				rationale: Type.Optional(Type.String()),
-				tier: Type.Optional(Type.String()),
-				rule: Type.Optional(Type.String()),
-				should_pause: Type.Optional(Type.Boolean()),
-				outcome: Type.Optional(Type.String()),
-				reasons: Type.Optional(Type.Array(Type.String())),
-				agentRole: Type.Optional(Type.String()),
-				status: Type.Optional(Type.String()),
-				details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-			},
-			{ additionalProperties: false },
-		),
+		// Variant-specific top-level fields are typed loosely here so the schema
+		// describes the surface area for tool-callers; `validateEvent` is the
+		// runtime gate that rejects unknown kinds and shape mismatches.
+		parameters: Type.Object({
+			questId: Type.String({ description: "Quest ID." }),
+			event: Type.String({
+				description: `Event discriminator. Must be one of: ${QUEST_EVENT_KINDS.join(", ")}.`,
+			}),
+			runId: Type.Optional(Type.String()),
+			workItemId: Type.Optional(Type.String()),
+			from: Type.Optional(Type.String()),
+			to: Type.Optional(Type.String()),
+			phase: Type.Optional(Type.String()),
+			confidence: Type.Optional(Type.Number()),
+			note: Type.Optional(Type.String()),
+			decision: Type.Optional(Type.String()),
+			rationale: Type.Optional(Type.String()),
+			tier: Type.Optional(Type.String()),
+			rule: Type.Optional(Type.String()),
+			should_pause: Type.Optional(Type.Boolean()),
+			outcome: Type.Optional(Type.String()),
+			reasons: Type.Optional(Type.Array(Type.String())),
+			agentRole: Type.Optional(Type.String()),
+			status: Type.Optional(Type.String()),
+			details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			return executeQuestTelemetryEvent(params as unknown as Parameters<typeof executeQuestTelemetryEvent>[0], ctx);
+			return executeQuestTelemetryEvent(params, ctx);
 		},
 	});
 

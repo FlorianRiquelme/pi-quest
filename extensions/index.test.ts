@@ -265,6 +265,87 @@ describe('piQuestExtension', () => {
       expect(result.details.workflow.status).toBe('verification-ready');
     });
 
+    describe('UAT doorbell (M4-2)', () => {
+      const baseWorkflow = (overrides: Record<string, unknown> = {}) => ({
+        id: 'q-uat',
+        title: 'Doorbell Quest',
+        status: 'verification-ready',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'HANDOFF.md', verification: 'VERIFICATION.md' },
+        ...overrides,
+      });
+
+      it('fires terminal bell + notify when transitioning from verification-ready', async () => {
+        vol.fromJSON({
+          '/project/.pi/quests/q-uat/workflow.json': JSON.stringify(baseWorkflow()),
+        });
+        const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+        try {
+          piQuestExtension(mockPi as any);
+          const tool = registeredTools['quest_write_workflow'];
+          const result = await tool.execute(
+            'tc-1',
+            { questId: 'q-uat', action: 'set-status', status: 'uat-ready' },
+            undefined,
+            undefined,
+            { cwd: '/project', ui: mockUi },
+          );
+          expect(result.isError).toBeFalsy();
+          const bellWrites = stdoutSpy.mock.calls.filter((call) => call[0] === '\x07');
+          expect(bellWrites).toHaveLength(1);
+        } finally {
+          stdoutSpy.mockRestore();
+        }
+        const doorbellCalls = (mockUi.notify as any).mock.calls.filter(
+          (c: any[]) => typeof c[0] === 'string' && c[0].startsWith('UAT pending for'),
+        );
+        expect(doorbellCalls).toHaveLength(1);
+        expect(doorbellCalls[0][0]).toBe('UAT pending for Doorbell Quest');
+        expect(doorbellCalls[0][1]).toBe('info');
+
+        const persisted = JSON.parse(
+          vol.readFileSync('/project/.pi/quests/q-uat/workflow.json', 'utf-8') as string,
+        );
+        expect(persisted.uat_doorbell_fired_at).toMatch(
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+        );
+      });
+
+      it('does not re-fire on uat-failed → uat-ready re-entry', async () => {
+        vol.fromJSON({
+          '/project/.pi/quests/q-uat/workflow.json': JSON.stringify(
+            baseWorkflow({
+              status: 'uat-failed',
+              uat_doorbell_fired_at: '2024-01-02T00:00:00.000Z',
+            }),
+          ),
+        });
+        const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+        try {
+          piQuestExtension(mockPi as any);
+          const tool = registeredTools['quest_write_workflow'];
+          const result = await tool.execute(
+            'tc-1',
+            { questId: 'q-uat', action: 'set-status', status: 'uat-ready' },
+            undefined,
+            undefined,
+            { cwd: '/project', ui: mockUi },
+          );
+          expect(result.isError).toBeFalsy();
+          const bellWrites = stdoutSpy.mock.calls.filter((call) => call[0] === '\x07');
+          expect(bellWrites).toHaveLength(0);
+        } finally {
+          stdoutSpy.mockRestore();
+        }
+        const doorbellCalls = (mockUi.notify as any).mock.calls.filter(
+          (c: any[]) => typeof c[0] === 'string' && c[0].startsWith('UAT pending for'),
+        );
+        expect(doorbellCalls).toHaveLength(0);
+      });
+    });
+
     it('allows invalid transition with force=true', async () => {
       const workflow = {
         id: 'test-quest',

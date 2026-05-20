@@ -42,6 +42,12 @@ export interface QuestWorkflow {
 	updatedAt: string;
 	source: QuestSource;
 	artifacts: QuestArtifacts;
+	/**
+	 * ISO 8601 timestamp recorded the first time the UAT doorbell fired for
+	 * this quest (see ADR 016). Used to make the doorbell idempotent across
+	 * subsequent `uat-ready` re-entries (e.g. uat-failed → uat-ready loops).
+	 */
+	uat_doorbell_fired_at?: string;
 }
 
 export interface CurrentQuestState {

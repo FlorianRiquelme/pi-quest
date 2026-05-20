@@ -20,6 +20,8 @@
  * anomaly detection, and narrative composition, never for current state.
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 
@@ -258,4 +260,31 @@ export function validateEvent(input: unknown): QuestEvent {
 		);
 	}
 	return input as QuestEvent;
+}
+
+/**
+ * Append a `stage_entered` audit event to the quest's event log. Called from
+ * every status-transition site so downstream consumers (Two Clocks in the
+ * Hearth Widget, Homecoming Brief title bar, anomaly poller correlation) have
+ * stage timing without each call site re-implementing the boilerplate.
+ *
+ * No-op when `to === from` — guards against transition-less workflow writes.
+ */
+export function emitStageEntered(
+	questDir: string,
+	questId: string,
+	from: string | undefined,
+	to: string,
+): void {
+	if (from === to) return;
+	const telemetryPath = path.join(questDir, "telemetry", "events.jsonl");
+	fs.mkdirSync(path.dirname(telemetryPath), { recursive: true });
+	const event = validateEvent({
+		event: "stage_entered",
+		timestamp: new Date().toISOString(),
+		questId,
+		from,
+		to,
+	});
+	fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
 }

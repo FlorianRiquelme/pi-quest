@@ -24,7 +24,7 @@ import {
 	runSubagent,
 	startSubagentRun,
 } from "./agents.js";
-import { validateEvent } from "./events.js";
+import { emitStageEntered, validateEvent } from "./events.js";
 import type { BackgroundRunSummary, ToolContext } from "./types.js";
 
 /* ================================ Theme helpers ================================ */
@@ -435,6 +435,7 @@ export async function executeQuestWriteWorkflow(
 		workflow.status = params.status as QuestStatus;
 		workflow.updatedAt = new Date().toISOString();
 		saveQuestWorkflow(questDir, workflow);
+		emitStageEntered(questDir, params.questId, previousStatus, workflow.status);
 		// M4-2: UAT doorbell at the verification-ready → uat-ready boundary
 		// (ADR 016). Widget mood shift is M3-1's responsibility — not here.
 		fireUatDoorbell(ctx, workflow, questDir, previousStatus);

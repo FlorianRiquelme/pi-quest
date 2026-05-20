@@ -26,7 +26,7 @@ import { questDirPath } from "./paths.js";
 import { resolveReferences } from "./references.js";
 import { getAllQuestIds, loadCurrentState, loadQuestWorkflow, saveCurrentState, saveQuestWorkflow } from "./state.js";
 import type { CommandContext } from "./types.js";
-import { validateEvent } from "./events.js";
+import { emitStageEntered, validateEvent } from "./events.js";
 import {
 	generateHomecomingBrief,
 	isAutonomousToInteractiveTransition,
@@ -260,6 +260,7 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 	workflow.status = newStatus as QuestStatus;
 	workflow.updatedAt = new Date().toISOString();
 	saveQuestWorkflow(questDir, workflow);
+	emitStageEntered(questDir, id, previousStatus, workflow.status);
 	// M4-2: UAT doorbell at the verification-ready → uat-ready boundary (ADR 016).
 	// Widget mood shift is handled by M3-1 (Hearth Widget Needs-you mood) — no
 	// wiring required here.
@@ -331,9 +332,11 @@ export async function tryAutoRoute(ctx: CommandContext): Promise<boolean> {
 	if (!workflow) return false;
 
 	if (workflow.status === "planned") {
+		const previousStatus = workflow.status;
 		workflow.status = "launch-review";
 		workflow.updatedAt = new Date().toISOString();
 		saveQuestWorkflow(questDir, workflow);
+		emitStageEntered(questDir, questId, previousStatus, workflow.status);
 		ctx.ui.notify(
 			`Quest '${workflow.id}' entering Launch Review.\n` +
 				`The Launch Review skill is loaded inline. Walk through Compiler diagnostics, Blast Radius, and Pre-Mortem, then sign off via the skill's helper. Use \`/quest set-status ${workflow.id} executing\` (or \`--force\`) when ready.`,

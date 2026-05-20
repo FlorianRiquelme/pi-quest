@@ -126,6 +126,33 @@ describe('commands', () => {
       expect(notifyCalls[0].msg).toContain("status → reviewing");
     });
 
+    it('emits stage_entered event on every transition (regression — UAT-discovered)', async () => {
+      // The Two Clocks, Homecoming Brief, and anomaly poller all consume
+      // stage_entered events. Without this emission, Wall time can't be
+      // computed and the widget shows no clocks despite the quest being in
+      // executing. Surfaced during M2-1 UAT, 2026-05-20.
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1', title: 'Q', status: 'intake',
+          createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+          source: {}, artifacts: { handoff: 'H.md' },
+        }),
+      });
+      const ctx = mockCtx('/project');
+      await cmdSetStatus(ctx, ['q1', 'reviewing']);
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+      const stageEntered = events.find((e) => e.event === 'stage_entered');
+      expect(stageEntered).toBeDefined();
+      expect(stageEntered.from).toBe('intake');
+      expect(stageEntered.to).toBe('reviewing');
+      expect(stageEntered.questId).toBe('q1');
+      expect(typeof stageEntered.timestamp).toBe('string');
+    });
+
     it('rejects invalid transition without force', async () => {
       vol.fromJSON({
         '/project/.pi/quests/q1/workflow.json': JSON.stringify({

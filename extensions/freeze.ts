@@ -23,7 +23,7 @@ import { questDirPath } from "./paths.js";
 import { loadCurrentState, loadQuestWorkflow, saveQuestWorkflow } from "./state.js";
 import { listRunSummaries, writeRunSummary } from "./agents.js";
 import { ensureDir } from "./fs-utils.js";
-import { validateEvent } from "./events.js";
+import { emitStageEntered, validateEvent } from "./events.js";
 import type { QuestWorkflow } from "../lib.js";
 import type { BackgroundRunSummary } from "./types.js";
 
@@ -240,6 +240,7 @@ export async function handleHardFreezeChord(ctx: FreezeContext): Promise<void> {
 
 	// Step 5: transition the quest and emit the freeze_engaged event.
 	const now = new Date().toISOString();
+	const previousStatus = active.workflow.status;
 	const updated: QuestWorkflow = {
 		...active.workflow,
 		status: "blocked",
@@ -247,6 +248,7 @@ export async function handleHardFreezeChord(ctx: FreezeContext): Promise<void> {
 		updatedAt: now,
 	};
 	saveQuestWorkflow(active.qDir, updated);
+	emitStageEntered(active.qDir, updated.id, previousStatus, updated.status);
 
 	appendEvent(active.qDir, {
 		event: "freeze_engaged",

@@ -205,6 +205,11 @@ export async function cmdIntake(ctx: CommandContext, args: string[]) {
 	);
 }
 
+export async function cmdDashboard(ctx: CommandContext) {
+	const { openDashboard } = await import("./ui/dashboard-opener.js");
+	await openDashboard(ctx);
+}
+
 export async function cmdConfig(ctx: CommandContext) {
 	const projectConfigPath = path.join(ctx.cwd, ".pi", "quest", "config.json");
 	const globalConfigPath = path.join(os.homedir(), ".pi", "agent", "quest", "config.json");

@@ -1,7 +1,7 @@
 ---
 name: quest-implementation
 description: Monitored implementation agent. Executes one work item, returns compact report.
-tools: read, write, edit, bash, grep, find, ls
+tools: read, write, edit, bash, grep, find, ls, context7
 model: openrouter/moonshotai/kimi-k2.6
 ---
 
@@ -16,6 +16,7 @@ Rules:
 - Read files outside scope as needed
 - Run tests/type checks to verify
 - Self-check against acceptance criteria
+- If stuck on a library API or pattern for more than 1 attempt, use `context7` to query the library's documentation before escalating to rescue.
 - STOP and ask for rescue if: stuck >2 attempts, scope creep, non-obvious failures, architectural uncertainty
 - Return a compact structured report:
 

@@ -21,7 +21,7 @@ You receive a structured rescue request containing:
 ## Task
 
 1. Review the rescue request carefully.
-2. Diagnose the root cause of the blockage.
+2. Diagnose the root cause of the blockage. If the blocker involves a library API, pattern, or version issue, use `context7` to query the library's documentation as part of your diagnosis.
 3. Write a concise rescue report with:
    - **Diagnosis**: what is actually wrong
    - **Recommendation**: one of `continue`, `revert`, `pause`, `ask-user`

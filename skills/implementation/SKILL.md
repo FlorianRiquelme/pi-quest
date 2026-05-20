@@ -28,10 +28,14 @@ You may edit files ONLY within the directories/files declared in the Work Item's
 6. Perform a self-check against the Acceptance Criteria.
 7. Write your compact report.
 
+## Library Documentation
+
+If you are stuck on a library API, pattern, or usage question, use the `context7` MCP tool to query the library's documentation before escalating to rescue. This is often faster than trial-and-error.
+
 ## Stop Conditions
 
 You MUST stop and request rescue (via the orchestrator) if any of the following occur:
-- You are stuck on an error for more than 2 attempts.
+- You are stuck on an error for more than 2 attempts (after trying `context7` if it's a library issue).
 - The acceptance criteria cannot be met due to unexpected repo state.
 - You discover scope creep (you need to touch files outside your declared scope).
 - A test or check fails with a non-obvious cause.

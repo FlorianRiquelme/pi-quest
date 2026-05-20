@@ -9,3 +9,8 @@ coverage/
 .vscode/
 .idea/
 *.tsbuildinfo
+
+# pi-quest operational state
+.pi/quests/
+.pi/quest/state.json
+.pi/quest/approvals.json

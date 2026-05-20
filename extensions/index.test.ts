@@ -51,6 +51,7 @@ describe('piQuestExtension', () => {
     registerTool: vi.fn((def: any) => {
       registeredTools[def.name] = def;
     }),
+    registerShortcut: vi.fn(),
     on: vi.fn((event: string, handler: any) => {
       eventHandlers[event] = handler;
     }),
@@ -66,6 +67,16 @@ describe('piQuestExtension', () => {
 
   it('registers one command and five tools', () => {
     piQuestExtension(mockPi as any);
+    expect(mockPi.registerShortcut).toHaveBeenCalledTimes(1);
+    expect(mockPi.registerShortcut).toHaveBeenCalledWith(
+      'ctrl+shift+g',
+      expect.objectContaining({ description: 'Open quest dashboard' }),
+    );
+    expect(mockPi.registerShortcut).not.toHaveBeenCalledWith(
+      'alt+g',
+      expect.anything(),
+    );
+
     expect(Object.keys(registeredCommands)).toEqual(['quest']);
     expect(Object.keys(registeredTools)).toEqual([
       'quest_run_work_item',

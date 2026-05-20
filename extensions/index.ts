@@ -8,6 +8,8 @@
  * - quest_rescue tool — spawn a rescue subagent for blocked work
  * - quest_write_workflow tool — update quest workflow status with transition safety
  * - quest_telemetry_event tool — record telemetry events
+ * - Active quest widget above editor
+ * - Interactive dashboard overlay (ctrl+shift+g or /quest dashboard)
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -17,6 +19,7 @@ import { Type } from "typebox";
 import { getAllQuestIds } from "./state.js";
 import {
 	cmdConfig,
+	cmdDashboard,
 	cmdIntake,
 	cmdSelect,
 	cmdSetStatus,
@@ -34,13 +37,14 @@ import {
 	renderResultQuestRunWorkItem,
 	renderResultQuestWorkItemStatus,
 } from "./tools.js";
+import { setQuestWidget } from "./ui/widget.js";
 
 export default function piQuestExtension(pi: ExtensionAPI) {
 	/* ================================ Commands ================================ */
 
 	pi.registerCommand("quest", {
 		description:
-			"Quest execution engine. /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|config]",
+			"Quest execution engine. /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|config|dashboard]",
 		handler: async (args, ctx) => {
 			const parts = args.trim().split(/\s+/);
 			const subcommand = parts[0]?.toLowerCase() || "";
@@ -55,12 +59,17 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 					break;
 				case "intake":
 					await cmdIntake(ctx, parts.slice(1));
+					setQuestWidget(ctx);
 					break;
 				case "select":
 					await cmdSelect(ctx, parts.slice(1));
+					setQuestWidget(ctx);
 					break;
 				case "config":
 					await cmdConfig(ctx);
+					break;
+				case "dashboard":
+					await cmdDashboard(ctx);
 					break;
 				case "set-status":
 					await cmdSetStatus(ctx, parts.slice(1));
@@ -68,10 +77,20 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 				default:
 					ctx.ui.notify(`Unknown quest subcommand: ${subcommand}`, "error");
 					ctx.ui.notify(
-						"Usage: /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|config]",
+						"Usage: /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|config|dashboard]",
 						"info",
 					);
 			}
+		},
+	});
+
+	/* ================================ Shortcut ================================ */
+
+	pi.registerShortcut("ctrl+shift+g", {
+		description: "Open quest dashboard",
+		handler: async (ctx) => {
+			const { openDashboard } = await import("./ui/dashboard-opener.js");
+			await openDashboard(ctx);
 		},
 	});
 
@@ -182,6 +201,18 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 		},
 	});
 
+	/* ================================ Live widget refresh ================================ */
+
+	pi.on("tool_execution_end", async (event, ctx) => {
+		if (
+			event.toolName === "quest_run_work_item" ||
+			event.toolName === "quest_rescue" ||
+			event.toolName === "quest_work_item_status"
+		) {
+			setQuestWidget(ctx);
+		}
+	});
+
 	/* ================================ Lifecycle ================================ */
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -190,5 +221,6 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 			// side-effect: pre-load quest IDs into any future tracking structures
 			void id;
 		}
+		setQuestWidget(ctx);
 	});
 }

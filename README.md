@@ -22,10 +22,10 @@ pi -e ./pi-quest
 
 1. **Shape work outside pi** — produce a Markdown handoff in your repo.
 2. **Run `/quest intake docs/plans/my-handoff.md`** — pi-quest copies it into a quest workspace, derives a quest ID, and sets up `.gitignore`.
-3. **Run `/skill:quest-recon`** — cheap reconnaissance agent gathers repo evidence.
+3. **Run `/skill:quest-recon`** — cheap reconnaissance agent gathers repo evidence. It uses `context7` to look up documentation for key libraries/dependencies and records findings in a `## Library Context` section.
 4. **Run `/skill:quest-review-discussion`** — GPT-5.5-class agent reviews the handoff, resolves blockers, and produces a `RESOLVED_HANDOFF.md`.
-5. **Run `/skill:quest-planning`** — decomposes the resolved handoff into work items and an `IMPLEMENTATION_PLAN.md`.
-6. **Run `/skill:quest-execution-orchestrator`** — reads the plan, runs implementation agents, calls rescue if needed.
+5. **Run `/skill:quest-planning`** — decomposes the resolved handoff into work items and an `IMPLEMENTATION_PLAN.md`. It uses `context7` docs from recon (or queries fresh docs for unfamiliar libraries) to inform API choices and decomposition boundaries.
+6. **Run `/skill:quest-execution-orchestrator`** — reads the plan, runs implementation agents. Each implementation agent can query `context7` for library docs when stuck on an API, reducing unnecessary rescue escalations.
 7. **Run `/skill:quest-verification`** — verifies completed work against the plan.
 8. **Run `/skill:quest-uat`** — writes a human acceptance test guide.
 

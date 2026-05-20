@@ -26,7 +26,8 @@ You are given:
    - Run `find` to discover relevant directories or files.
    - Run `grep` to find related code patterns.
    - Read existing tests the handoff might modify.
-3. Do NOT implement anything. Do NOT write plan-level decisions. Only gather facts.
+3. Identify key libraries, frameworks, or dependencies the handoff or source code implies. Use the `context7` MCP tool to resolve their library IDs and query recent documentation for APIs, patterns, or breaking changes that could affect the planned work. Summarize findings in a `## Library Context` section.
+4. Do NOT implement anything. Do NOT write plan-level decisions. Only gather facts.
 4. Write `RECON.md` with structured findings:
 
 ### RECON.md structure
@@ -45,6 +46,9 @@ Relevant snippets or summaries of important code sections.
 
 ## Test Coverage
 What existing tests touch related areas.
+
+## Library Context
+Key libraries/dependencies and their relevant APIs or patterns from context7 docs queries.
 
 ## Risks / Gaps
 Things that might make implementation harder than the handoff suggests.

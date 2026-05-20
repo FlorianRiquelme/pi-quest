@@ -21,21 +21,23 @@ You are a planning agent for a pi Quest. Your job is to decompose the resolved h
 ## Task
 
 1. Read the resolved handoff and recon evidence.
-2. Decompose the work into **vertical slices** (each slice delivers a small end-to-end change).
-3. For each slice, create a Work Item with:
+2. If RECON.md includes a `## Library Context` section, use those findings to inform API choices, version constraints, and decomposition boundaries. If the work involves unfamiliar libraries not covered in RECON.md, use `context7` to query their docs before finalizing the plan.
+3. Decompose the work into **vertical slices** (each slice delivers a small end-to-end change).
+4. For each slice, create a Work Item with:
    - A unique ID (e.g., `001`, `002`)
    - Clear scope declaration (what files may be edited)
    - Acceptance criteria
    - Stop conditions (when the agent must stop and ask for help)
    - Estimated risk level (`low`, `medium`, `high`)
    - Any non-default tool requirements
-4. Group Work Items into **planned parallel batches**. Within a batch, all items must be independent (no file overlap, no ordering dependency).
-5. Write `IMPLEMENTATION_PLAN.md` with:
+5. Group Work Items into **planned parallel batches**. Within a batch, all items must be independent (no file overlap, no ordering dependency).
+6. Write `IMPLEMENTATION_PLAN.md` with:
    - Overview
    - Batch list with work item IDs
    - Risk assessment
    - Rollback guidance
-6. After writing the plan, update the quest's workflow status to `planned`.
+   - Library constraints / API notes (if context7 docs informed the plan)
+7. After writing the plan, update the quest's workflow status to `planned`.
 
 ## Work Item file structure (work-items/<id>.md)
 

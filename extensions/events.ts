@@ -1,10 +1,16 @@
 /**
- * Typed Quest event union — see ADR 010.
+ * Typed Quest event union — see ADR 010, extended by ADR 013 (M3-2).
  *
  * Every event written to `.pi/quests/<id>/telemetry/events.jsonl` matches one of
- * the nine variants below. The `event` field is the discriminator (snake_case
- * on the wire). Every variant carries `timestamp` (ISO 8601), `questId`, and an
- * optional open `details` slot for forward-compatible extras.
+ * the eleven variants below. The `event` field is the discriminator
+ * (snake_case on the wire). Every variant carries `timestamp` (ISO 8601),
+ * `questId`, and an optional open `details` slot for forward-compatible extras.
+ *
+ * ADR 010 originally defined 9 typed kinds and left the `details` slot as the
+ * primary forward-compat vector. ADR 013 (Hearth Widget) introduced two
+ * additional audit events — `freeze_engaged` and `freeze_released` — that
+ * deserve top-level treatment because they carry structural fields (mode,
+ * in_flight_runs, triggered_by) consumed by the widget and homecoming brief.
  *
  * The event log is an audit record — readers consult it for postmortem,
  * anomaly detection, and narrative composition, never for current state.
@@ -124,6 +130,29 @@ const RescueInvokedEvent = Type.Object({
 	details: DetailsField,
 });
 
+// ADR 013 §8 — freeze chord audit events. The schema grows beyond ADR 010's
+// original 9 by exactly two kinds; ADR 010 did not forbid extension.
+const FreezeEngagedEvent = Type.Object({
+	event: Type.Literal("freeze_engaged"),
+	timestamp: TimestampField,
+	questId: QuestIdField,
+	mode: Type.Union([Type.Literal("soft"), Type.Literal("hard")]),
+	in_flight_runs: Type.Integer({
+		minimum: 0,
+		description: "Number of runs that were running at the moment of freeze.",
+	}),
+	triggered_by: Type.Literal("user"),
+	details: DetailsField,
+});
+
+const FreezeReleasedEvent = Type.Object({
+	event: Type.Literal("freeze_released"),
+	timestamp: TimestampField,
+	questId: QuestIdField,
+	triggered_by: Type.Union([Type.Literal("user"), Type.Literal("auto")]),
+	details: DetailsField,
+});
+
 /* ================================ Union ================================ */
 
 export const QuestEventSchema = Type.Union([
@@ -136,11 +165,18 @@ export const QuestEventSchema = Type.Union([
 	AnomalyDetectedEvent,
 	LaunchGateEvent,
 	RescueInvokedEvent,
+	FreezeEngagedEvent,
+	FreezeReleasedEvent,
 ]);
 
 export type QuestEvent = Static<typeof QuestEventSchema>;
 
-/** The nine event kinds defined by ADR 010, in stable order. */
+/**
+ * The event kinds in the Quest typed union, in stable order.
+ *
+ * The first nine were defined by ADR 010. ADR 013 §8 (Hearth Widget freeze
+ * chords) added `freeze_engaged` and `freeze_released`.
+ */
 export const QUEST_EVENT_KINDS = [
 	"stage_entered",
 	"run_started",
@@ -151,6 +187,8 @@ export const QUEST_EVENT_KINDS = [
 	"anomaly_detected",
 	"launch_gate",
 	"rescue_invoked",
+	"freeze_engaged",
+	"freeze_released",
 ] as const;
 
 export type QuestEventKind = (typeof QUEST_EVENT_KINDS)[number];
@@ -164,7 +202,7 @@ const KIND_SET = new Set<string>(QUEST_EVENT_KINDS);
  *
  * Throws on:
  *   - missing or non-string `event`
- *   - `event` not in the nine kinds enumerated above
+ *   - `event` not in the kinds enumerated by {@link QUEST_EVENT_KINDS}
  *   - missing `timestamp` or `questId`
  *   - a variant-specific required field absent or wrong-typed
  *

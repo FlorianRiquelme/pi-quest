@@ -9,7 +9,7 @@ const ts = '2024-01-01T12:00:00.000Z';
 const questId = 'q1';
 
 describe('QUEST_EVENT_KINDS', () => {
-	it('contains exactly the 9 kinds from ADR 010', () => {
+	it('contains the 9 kinds from ADR 010 plus the 2 freeze kinds added by M3-2 / ADR 013', () => {
 		expect([...QUEST_EVENT_KINDS].sort()).toEqual(
 			[
 				'stage_entered',
@@ -21,6 +21,8 @@ describe('QUEST_EVENT_KINDS', () => {
 				'anomaly_detected',
 				'launch_gate',
 				'rescue_invoked',
+				'freeze_engaged',
+				'freeze_released',
 			].sort(),
 		);
 	});
@@ -115,6 +117,35 @@ describe('validateEvent', () => {
 				workItemId: '001',
 				status: 'completed',
 			},
+			{
+				event: 'freeze_engaged',
+				timestamp: ts,
+				questId,
+				mode: 'soft',
+				in_flight_runs: 0,
+				triggered_by: 'user',
+			},
+			{
+				event: 'freeze_engaged',
+				timestamp: ts,
+				questId,
+				mode: 'hard',
+				in_flight_runs: 3,
+				triggered_by: 'user',
+				details: { cancel_reason: 'user_aborted' },
+			},
+			{
+				event: 'freeze_released',
+				timestamp: ts,
+				questId,
+				triggered_by: 'user',
+			},
+			{
+				event: 'freeze_released',
+				timestamp: ts,
+				questId,
+				triggered_by: 'auto',
+			},
 		];
 
 		for (const sample of samples) {
@@ -187,10 +218,48 @@ describe('validateEvent', () => {
 			{ event: 'anomaly_detected' },
 			{ event: 'launch_gate' },
 			{ event: 'rescue_invoked' },
+			{ event: 'freeze_engaged' },
+			{ event: 'freeze_released' },
 		];
 		for (const s of samples) covered.add(s.event);
 		for (const kind of QUEST_EVENT_KINDS) {
 			expect(covered.has(kind)).toBe(true);
 		}
+	});
+
+	it('rejects freeze_engaged with an unknown mode', () => {
+		expect(() =>
+			validateEvent({
+				event: 'freeze_engaged',
+				timestamp: ts,
+				questId,
+				mode: 'permafrost',
+				in_flight_runs: 0,
+				triggered_by: 'user',
+			}),
+		).toThrow();
+	});
+
+	it('rejects freeze_released with an unknown triggered_by', () => {
+		expect(() =>
+			validateEvent({
+				event: 'freeze_released',
+				timestamp: ts,
+				questId,
+				triggered_by: 'cosmic_ray',
+			}),
+		).toThrow();
+	});
+
+	it('rejects freeze_engaged when in_flight_runs is missing', () => {
+		expect(() =>
+			validateEvent({
+				event: 'freeze_engaged',
+				timestamp: ts,
+				questId,
+				mode: 'soft',
+				triggered_by: 'user',
+			}),
+		).toThrow();
 	});
 });

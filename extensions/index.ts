@@ -42,6 +42,7 @@ import {
 	renderResultQuestWorkItemStatus,
 } from "./tools.js";
 import { reapOrphanedRuns, reapOrphanWorktrees, startLivenessSupervisor } from "./agents.js";
+import { handleHardFreezeChord, handleSoftFreezeChord } from "./freeze.js";
 import { setQuestWidget } from "./ui/widget.js";
 
 export default function piQuestExtension(pi: ExtensionAPI) {
@@ -97,13 +98,34 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	/* ================================ Shortcut ================================ */
+	/* ================================ Shortcuts ================================ */
 
+	// `ctrl+shift+g` opens the dashboard. The two freeze chords (`ctrl+p`,
+	// `ctrl+shift+p`) come from ADR 013 §8. These chords were picked because
+	// they do not collide with any pi-coding-agent editor binding documented in
+	// `examples/`; if a future pi release reclaims them, the chord can be moved
+	// here without touching the handler.
 	pi.registerShortcut("ctrl+shift+g", {
 		description: "Open quest dashboard",
 		handler: async (ctx) => {
 			const { openDashboard } = await import("./ui/dashboard-opener.js");
 			await openDashboard(ctx);
+		},
+	});
+
+	pi.registerShortcut("ctrl+p", {
+		description: "Toggle quest soft freeze (block new run spawns)",
+		handler: async (ctx) => {
+			await handleSoftFreezeChord(ctx);
+			setQuestWidget(ctx);
+		},
+	});
+
+	pi.registerShortcut("ctrl+shift+p", {
+		description: "Quest hard freeze — abort all running runs",
+		handler: async (ctx) => {
+			await handleHardFreezeChord(ctx);
+			setQuestWidget(ctx);
 		},
 	});
 

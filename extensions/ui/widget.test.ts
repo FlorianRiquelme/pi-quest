@@ -189,6 +189,81 @@ describe('assembleWidgetLines — mood glyph in line 2', () => {
   });
 });
 
+describe('assembleWidgetLines — soft-freeze line-2 indicator (M3-2)', () => {
+  function fakeTheme() {
+    return {
+      fg: (_c: string, t: string) => t,
+      bold: (t: string) => t,
+    };
+  }
+
+  function snapshot(overrides: Partial<WidgetSnapshot> = {}): WidgetSnapshot {
+    return {
+      hasActiveQuest: true,
+      title: 'Frozen Quest',
+      status: 'executing',
+      questId: 'q',
+      runningCount: 3,
+      completedCount: 0,
+      totalCount: 5,
+      activeRunCount: 3,
+      lastSyntheticBeatAt: undefined,
+      lastSemanticBeatAt: NOW - 30_000,
+      lastLowConfidenceBeatAt: undefined,
+      lastRetrySignalAt: undefined,
+      hasPausedRun: false,
+      softFreeze: true,
+      wallMs: 60 * 60_000,
+      computeMs: 12 * 60_000,
+      showClocks: true,
+      now: NOW,
+      ...overrides,
+    };
+  }
+
+  it('renders the freeze snowflake glyph on line 2 when softFreeze=true', () => {
+    const lines = assembleWidgetLines(snapshot(), {
+      width: 120,
+      theme: fakeTheme() as any,
+      trueColor: false,
+      pulsePhase: 0,
+    });
+    expect(lines[1]).toContain('❄'); // ❄
+  });
+
+  it('renders "frozen · N runs completing · Ctrl+P to release" on line 2', () => {
+    const lines = assembleWidgetLines(snapshot({ runningCount: 3 }), {
+      width: 120,
+      theme: fakeTheme() as any,
+      trueColor: false,
+      pulsePhase: 0,
+    });
+    expect(lines[1]).toMatch(/frozen/);
+    expect(lines[1]).toMatch(/3 runs? completing/);
+    expect(lines[1]).toMatch(/Ctrl\+P/);
+  });
+
+  it('uses singular "run completing" when exactly one run is in flight', () => {
+    const lines = assembleWidgetLines(snapshot({ runningCount: 1 }), {
+      width: 120,
+      theme: fakeTheme() as any,
+      trueColor: false,
+      pulsePhase: 0,
+    });
+    expect(lines[1]).toMatch(/1 run completing/);
+  });
+
+  it('selects the Resting mood (· glyph in line 1 word "resting")', () => {
+    const lines = assembleWidgetLines(snapshot(), {
+      width: 120,
+      theme: fakeTheme() as any,
+      trueColor: false,
+      pulsePhase: 0,
+    });
+    expect(lines[0]).toMatch(/resting/);
+  });
+});
+
 describe('assembleWidgetLines — Two Clocks visibility', () => {
   function fakeTheme() {
     return {

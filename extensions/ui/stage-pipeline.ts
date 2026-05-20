@@ -10,6 +10,7 @@ const STAGES: QuestStatus[] = [
 	"reviewing",
 	"resolved",
 	"planned",
+	"launch-review",
 	"executing",
 	"verification",
 	"verification-ready",

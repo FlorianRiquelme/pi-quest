@@ -9,6 +9,7 @@ export type QuestStatus =
 	| "needs-resolution"
 	| "resolved"
 	| "planned"
+	| "launch-review"
 	| "executing"
 	| "blocked"
 	| "verification"
@@ -117,7 +118,8 @@ export const VALID_STATUS_TRANSITIONS: Partial<Record<QuestStatus, QuestStatus[]
 	reviewing: ["needs-resolution", "resolved"],
 	"needs-resolution": ["reviewing", "resolved"],
 	resolved: ["planned"],
-	planned: ["executing"],
+	planned: ["launch-review"],
+	"launch-review": ["executing", "blocked"],
 	executing: ["blocked", "verification"],
 	blocked: ["executing", "needs-resolution", "reviewing", "resolved", "planned", "verification"],
 	verification: ["verification-ready", "blocked"],

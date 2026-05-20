@@ -8,7 +8,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { isValidTransition, QuestStatus } from "../lib.js";
-import { fireUatDoorbell } from "./commands.js";
+import { fireUatDoorbell, runLaunchGate } from "./commands.js";
 import { MAX_SUBAGENT_CAPTURE_CHARS } from "./fs-utils.js";
 import { ensureDir } from "./fs-utils.js";
 import { questDirPath } from "./paths.js";
@@ -384,6 +384,27 @@ export async function executeQuestWriteWorkflow(
 					],
 					isError: true,
 					details: { currentStatus: workflow.status, requestedStatus: params.status, missingArtifact: verificationPath },
+				};
+			}
+		}
+
+		// Launch Gate (ADR 012): launch-review → executing
+		if (workflow.status === "launch-review" && params.status === "executing") {
+			const gateResult = runLaunchGate(ctx, params.questId, questDir, workflow, !!params.force);
+			if (gateResult.outcome === "blocked") {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Launch Gate blocked: ${gateResult.reasons.join(", ")}. Run the Launch Review skill or use force=true to override.`,
+						},
+					],
+					isError: true,
+					details: {
+						currentStatus: workflow.status,
+						requestedStatus: params.status,
+						reasons: gateResult.reasons,
+					},
 				};
 			}
 		}

@@ -126,6 +126,184 @@ describe('commands', () => {
       expect(notifyCalls[0].msg).toContain('Invalid status transition');
     });
 
+    describe('Launch Gate (M2-1)', () => {
+      const baseLaunchReviewWorkflow = (overrides: Record<string, unknown> = {}) => ({
+        id: 'q1',
+        title: 'Launch quest',
+        status: 'launch-review',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'H.md', plan: 'IMPLEMENTATION_PLAN.md' },
+        ...overrides,
+      });
+
+      const fullPassPlan =
+        '---\n' +
+        'blast_radius:\n' +
+        '  in_scope:\n' +
+        '    - src/foo.ts\n' +
+        'pre_mortem:\n' +
+        '  most_likely_failure: oops\n' +
+        'compiler_diagnostics: []\n' +
+        'launch_review:\n' +
+        '  signed_off_at: "2026-05-20T11:30:00Z"\n' +
+        '  signed_off_by: user\n' +
+        '---\n\n# Plan\n';
+
+      it('allows launch-review → executing when gate passes', async () => {
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+          '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': fullPassPlan,
+        });
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+        const lastNotify = notifyCalls[notifyCalls.length - 1];
+        expect(lastNotify.level).toBe('info');
+        expect(lastNotify.msg).toContain('status → executing');
+
+        const persisted = JSON.parse(
+          vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+        );
+        expect(persisted.status).toBe('executing');
+
+        const jsonl = vol.readFileSync(
+          '/project/.pi/quests/q1/telemetry/events.jsonl',
+          'utf-8',
+        ) as string;
+        const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+        const gateEvent = events.find((e) => e.event === 'launch_gate');
+        expect(gateEvent).toBeDefined();
+        expect(gateEvent.outcome).toBe('passed');
+        expect(gateEvent.reasons).toEqual([]);
+      });
+
+      it('blocks when blast_radius missing', async () => {
+        const plan =
+          '---\n' +
+          'pre_mortem:\n' +
+          '  most_likely_failure: oops\n' +
+          'launch_review:\n' +
+          '  signed_off_at: "2026-05-20T11:30:00Z"\n' +
+          '  signed_off_by: user\n' +
+          '---\n\n# Plan\n';
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+          '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': plan,
+        });
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+        const errorNotify = notifyCalls.find((c) => c.level === 'error');
+        expect(errorNotify).toBeDefined();
+        expect(errorNotify!.msg).toContain('Launch Gate');
+        expect(errorNotify!.msg).toContain('missing_blast_radius');
+
+        const persisted = JSON.parse(
+          vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+        );
+        expect(persisted.status).toBe('launch-review');
+
+        const jsonl = vol.readFileSync(
+          '/project/.pi/quests/q1/telemetry/events.jsonl',
+          'utf-8',
+        ) as string;
+        const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+        const gateEvent = events.find((e) => e.event === 'launch_gate');
+        expect(gateEvent.outcome).toBe('blocked');
+        expect(gateEvent.reasons).toContain('missing_blast_radius');
+      });
+
+      it('blocks when pre_mortem missing', async () => {
+        const plan =
+          '---\n' +
+          'blast_radius:\n' +
+          '  in_scope:\n' +
+          '    - src/x.ts\n' +
+          'launch_review:\n' +
+          '  signed_off_at: "2026-05-20T11:30:00Z"\n' +
+          '  signed_off_by: user\n' +
+          '---\n';
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+          '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': plan,
+        });
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+        const errorNotify = notifyCalls.find((c) => c.level === 'error');
+        expect(errorNotify!.msg).toContain('missing_pre_mortem');
+      });
+
+      it('blocks when compiler_diagnostics has severity:error', async () => {
+        const plan =
+          '---\n' +
+          'blast_radius:\n' +
+          '  in_scope:\n' +
+          '    - src/x.ts\n' +
+          'pre_mortem:\n' +
+          '  most_likely_failure: oops\n' +
+          'compiler_diagnostics:\n' +
+          '  - severity: error\n' +
+          '    rule: WP-02:missing_acceptance\n' +
+          'launch_review:\n' +
+          '  signed_off_at: "2026-05-20T11:30:00Z"\n' +
+          '  signed_off_by: user\n' +
+          '---\n';
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+          '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': plan,
+        });
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+        const errorNotify = notifyCalls.find((c) => c.level === 'error');
+        expect(errorNotify!.msg).toContain('compiler_error');
+        expect(errorNotify!.msg).toContain('WP-02:missing_acceptance');
+      });
+
+      it('blocks when sign-off missing', async () => {
+        const plan =
+          '---\n' +
+          'blast_radius:\n' +
+          '  in_scope:\n' +
+          '    - src/x.ts\n' +
+          'pre_mortem:\n' +
+          '  most_likely_failure: oops\n' +
+          '---\n';
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+          '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': plan,
+        });
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+        const errorNotify = notifyCalls.find((c) => c.level === 'error');
+        expect(errorNotify!.msg).toContain('missing_sign_off');
+      });
+
+      it('--force bypasses gate and emits force_passed', async () => {
+        // No plan file at all — gate would normally block.
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+        });
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing', '--force']);
+        const lastNotify = notifyCalls[notifyCalls.length - 1];
+        expect(lastNotify.msg).toContain('status → executing');
+
+        const persisted = JSON.parse(
+          vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+        );
+        expect(persisted.status).toBe('executing');
+
+        const jsonl = vol.readFileSync(
+          '/project/.pi/quests/q1/telemetry/events.jsonl',
+          'utf-8',
+        ) as string;
+        const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+        const gateEvent = events.find((e) => e.event === 'launch_gate');
+        expect(gateEvent.outcome).toBe('force_passed');
+        expect(gateEvent.reasons).toContain('user_forced');
+      });
+    });
+
     it('rejects verification-ready without VERIFICATION.md', async () => {
       vol.fromJSON({
         '/project/.pi/quests/q1/workflow.json': JSON.stringify({

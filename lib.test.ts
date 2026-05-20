@@ -4,6 +4,8 @@ import {
   deriveQuestId,
   generateTimestampId,
   collisionSuffixed,
+  VALID_STATUS_TRANSITIONS,
+  type QuestStatus,
 } from './lib';
 
 describe('isValidTransition', () => {
@@ -16,7 +18,8 @@ describe('isValidTransition', () => {
     expect(isValidTransition('needs-resolution', 'reviewing')).toBe(true);
     expect(isValidTransition('needs-resolution', 'resolved')).toBe(true);
     expect(isValidTransition('resolved', 'planned')).toBe(true);
-    expect(isValidTransition('planned', 'executing')).toBe(true);
+    expect(isValidTransition('planned', 'launch-review')).toBe(true);
+    expect(isValidTransition('launch-review', 'executing')).toBe(true);
     expect(isValidTransition('executing', 'blocked')).toBe(true);
     expect(isValidTransition('executing', 'verification')).toBe(true);
     expect(isValidTransition('blocked', 'executing')).toBe(true);
@@ -33,6 +36,34 @@ describe('isValidTransition', () => {
     expect(isValidTransition('archived', 'intake')).toBe(false);
     expect(isValidTransition('executing', 'intake')).toBe(false);
     expect(isValidTransition('resolved', 'intake')).toBe(false);
+  });
+
+  describe('launch-review (M2-1)', () => {
+    it('is registered in the transition whitelist', () => {
+      expect(VALID_STATUS_TRANSITIONS['launch-review' as QuestStatus]).toBeDefined();
+    });
+
+    it('allows planned → launch-review', () => {
+      expect(isValidTransition('planned', 'launch-review')).toBe(true);
+    });
+
+    it('allows launch-review → executing', () => {
+      expect(isValidTransition('launch-review', 'executing')).toBe(true);
+    });
+
+    it('allows launch-review → blocked (cancel path)', () => {
+      expect(isValidTransition('launch-review', 'blocked')).toBe(true);
+    });
+
+    it('disallows planned → executing (must go through launch-review)', () => {
+      expect(isValidTransition('planned', 'executing')).toBe(false);
+    });
+
+    it('disallows launch-review → unrelated stages', () => {
+      expect(isValidTransition('launch-review', 'intake')).toBe(false);
+      expect(isValidTransition('launch-review', 'verification')).toBe(false);
+      expect(isValidTransition('launch-review', 'completed')).toBe(false);
+    });
   });
 
   it('returns false for unknown from-status', () => {

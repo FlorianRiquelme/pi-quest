@@ -26,6 +26,7 @@ import {
 	cmdSetStatus,
 	listQuests,
 	showStatus,
+	tryAutoRoute,
 } from "./commands.js";
 import {
 	executeQuestConcession,
@@ -55,6 +56,14 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 
 			switch (subcommand) {
 				case "":
+					// Auto-router (ADR 008): try to advance the active quest. If no
+					// stage was advanced, fall back to the status display.
+					if (!(await tryAutoRoute(ctx))) {
+						await showStatus(ctx);
+					} else {
+						setQuestWidget(ctx);
+					}
+					break;
 				case "status":
 					await showStatus(ctx);
 					break;

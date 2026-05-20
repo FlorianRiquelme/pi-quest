@@ -1,68 +1,156 @@
 /**
- * Active quest widget — persistent 2-line display above the editor.
+ * Hearth Widget — persistent 2-line ambient display above the editor.
+ *
+ * See ADR 013 for the design (5 moods, brightness-earned, pulse only when
+ * alive and working, Two Clocks, 250ms cache, terminal capability fallback).
+ *
+ * Implementation split:
+ *   - `widget-mood.ts`   — pure mood selection
+ *   - `two-clocks.ts`    — pure clock math and formatting
+ *   - `widget-data.ts`   — filesystem reads → WidgetSnapshot
+ *   - `widget-cache.ts`  — 250ms TTL cache
+ *   - `widget-render.ts` — pure rendering (lines + colors)
+ *
+ * This file is the thin glue: it wires the factory into pi's setWidget API,
+ * owns the pulse interval, and triggers TUI re-renders.
  */
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import {
-	countCompletedWorkItems,
-	countRunningWorkItems,
-	getActiveQuestSummary,
-	getTotalWorkItems,
-} from "./data.js";
+import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { selectMoodFromSnapshot, assembleWidgetLines, detectTrueColor } from './widget-render.js';
+import { collectWidgetSnapshot } from './widget-data.js';
+import { WidgetCache, type MoodTransitionState } from './widget-cache.js';
+import { moodPulses, moodPulsePeriodMs, type Mood } from './widget-mood.js';
 
-export function setQuestWidget(ctx: ExtensionContext) {
+/* ============================ Transition debounce ============================ */
+
+const MOOD_DEBOUNCE_MS = 1500;
+
+/**
+ * Debounce mood transitions between Cruising and Working hard so a brief
+ * activity spike does not cause flicker.
+ *
+ * - Transitions involving Needs-you, Resting, or Stuck are immediate (those
+ *   moods carry meaning the user needs to see right away).
+ * - Transitions between Cruising and Working hard wait `MOOD_DEBOUNCE_MS` of
+ *   sustained candidate before flipping `displayed`.
+ */
+export function nextDisplayedMood(
+	state: MoodTransitionState,
+	candidate: Mood,
+	now: number,
+): MoodTransitionState {
+	if (candidate === state.displayed) {
+		return { displayed: state.displayed, candidate, candidateSinceMs: now };
+	}
+
+	const isCruisingWorkingPair =
+		(state.displayed === 'cruising' && candidate === 'working_hard') ||
+		(state.displayed === 'working_hard' && candidate === 'cruising');
+
+	if (!isCruisingWorkingPair) {
+		// Immediate flip — every other transition.
+		return { displayed: candidate, candidate, candidateSinceMs: now };
+	}
+
+	// Track how long the candidate has been different.
+	const newSince =
+		state.candidate === candidate ? state.candidateSinceMs : now;
+
+	if (now - newSince >= MOOD_DEBOUNCE_MS) {
+		return { displayed: candidate, candidate, candidateSinceMs: now };
+	}
+	return { displayed: state.displayed, candidate, candidateSinceMs: newSince };
+}
+
+/* ============================ Widget factory ============================ */
+
+export function setQuestWidget(ctx: ExtensionContext): void {
 	ctx.ui.setWidget(
-		"quest",
-		(_tui, theme) => {
+		'quest',
+		(tui, theme) => {
+			const cache = new WidgetCache(() => collectWidgetSnapshot(ctx.cwd, Date.now()));
+			const trueColor = detectTrueColor();
+
+			let transition: MoodTransitionState | undefined;
+			let pulseTimer: NodeJS.Timeout | undefined;
+			let currentPulseStartMs = Date.now();
+			let currentPulsingMood: Mood | undefined;
+
+			const stopPulse = () => {
+				if (pulseTimer) {
+					clearInterval(pulseTimer);
+					pulseTimer = undefined;
+				}
+				currentPulsingMood = undefined;
+			};
+
+			const startPulse = (mood: Mood) => {
+				stopPulse();
+				if (!trueColor) return; // No pulse in fallback mode.
+				if (!moodPulses(mood)) return;
+				currentPulsingMood = mood;
+				currentPulseStartMs = Date.now();
+				const tick = 50; // 50ms granularity → smooth animation
+				const timer = setInterval(() => {
+					tui.requestRender();
+				}, tick);
+				if (typeof (timer as { unref?: () => void }).unref === 'function') {
+					(timer as { unref?: () => void }).unref!();
+				}
+				pulseTimer = timer;
+			};
+
+			const computePulsePhase = (mood: Mood, now: number): number => {
+				const period = moodPulsePeriodMs(mood);
+				if (period <= 0) return 0;
+				return ((now - currentPulseStartMs) % period) / period;
+			};
+
 			return {
 				render: (width: number) => {
-					const summary = getActiveQuestSummary(ctx.cwd);
-					if (!summary) {
-						return [truncateToWidth(theme.fg("dim", "No active quest — /quest intake <handoff.md>"), width)];
-					}
+					const snap = cache.get();
+					const now = Date.now();
+					const candidate = selectMoodFromSnapshot(snap);
 
-					const running = countRunningWorkItems(ctx.cwd, summary.id);
-					const completed = countCompletedWorkItems(ctx.cwd, summary.id);
-					const total = getTotalWorkItems(ctx.cwd, summary.id);
-
-					const statusColor =
-						summary.status === "completed"
-							? "success"
-							: summary.status === "blocked" || summary.status === "uat-failed"
-								? "error"
-								: summary.status === "executing"
-									? "warning"
-									: "accent";
-
-					const prefix = theme.fg("dim", "Active: ");
-					const suffix = theme.fg("dim", " — ") + theme.fg(statusColor, summary.status);
-					const prefixWidth = visibleWidth(prefix);
-					const suffixWidth = visibleWidth(suffix);
-					const maxTitleWidth = Math.max(0, width - prefixWidth - suffixWidth);
-					const title = truncateToWidth(theme.fg("text", summary.title), maxTitleWidth);
-					const line1 = prefix + title + suffix;
-
-					const parts: string[] = [];
-					if (running > 0) {
-						parts.push(theme.fg("warning", `${running} running`));
-					}
-					if (total > 0) {
-						parts.push(theme.fg("dim", `${completed}/${total} done`));
+					if (!transition) {
+						transition = { displayed: candidate, candidate, candidateSinceMs: now };
 					} else {
-						parts.push(theme.fg("dim", "no work items"));
+						transition = nextDisplayedMood(transition, candidate, now);
 					}
-					const line2 = truncateToWidth(theme.fg("dim", "  ") + parts.join(theme.fg("dim", "  •  ")), width);
+					const mood = transition.displayed;
 
-					return [line1, line2];
+					// Manage pulse timer lifecycle. If the displayed mood pulses, ensure
+					// the timer is running for it; otherwise stop the timer.
+					if (moodPulses(mood) && trueColor) {
+						if (currentPulsingMood !== mood) startPulse(mood);
+					} else if (pulseTimer) {
+						stopPulse();
+					}
+
+					const pulsePhase = computePulsePhase(mood, now);
+
+					// Render using the displayed mood — possibly one debounce-tick behind
+					// the candidate to suppress brief Cruising ↔ Working-hard flicker.
+					return assembleWidgetLines(snap, {
+						width,
+						theme,
+						trueColor,
+						pulsePhase,
+						moodOverride: mood,
+					});
 				},
-				invalidate: () => {},
+				invalidate: () => {
+					cache.invalidate();
+				},
+				dispose: () => {
+					stopPulse();
+				},
 			};
 		},
-		{ placement: "aboveEditor" },
+		{ placement: 'aboveEditor' },
 	);
 }
 
-export function clearQuestWidget(ctx: ExtensionContext) {
-	ctx.ui.setWidget("quest", undefined);
+export function clearQuestWidget(ctx: ExtensionContext): void {
+	ctx.ui.setWidget('quest', undefined);
 }

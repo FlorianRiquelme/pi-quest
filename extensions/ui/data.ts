@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { QuestWorkflow, QuestStatus } from "../../lib.js";
 import { listRunSummaries } from "../agents.js";
+import type { QuestEvent } from "../events.js";
 import { questDirPath } from "../paths.js";
 import { getAllQuestIds, loadCurrentState, loadQuestWorkflow } from "../state.js";
 
@@ -158,4 +159,31 @@ export function getTotalWorkItems(cwd: string, questId: string): number {
 export function readArtifactFile(filePath: string): string | undefined {
 	if (!fs.existsSync(filePath)) return undefined;
 	return fs.readFileSync(filePath, "utf-8");
+}
+
+/**
+ * Read a quest's typed audit event log (`telemetry/events.jsonl`).
+ *
+ * Each JSONL line is parsed independently; malformed lines are skipped so
+ * that the widget can never throw on a partially-written log. Returns an
+ * empty array if the log file does not exist.
+ *
+ * Consumed by the Hearth Widget for mood selection (synthetic vs semantic
+ * progress beats) and Two Clocks (wall and compute durations).
+ */
+export function readQuestEvents(cwd: string, questId: string): QuestEvent[] {
+	const eventsPath = path.join(questDirPath(cwd, questId), "telemetry", "events.jsonl");
+	if (!fs.existsSync(eventsPath)) return [];
+	const raw = fs.readFileSync(eventsPath, "utf-8");
+	const out: QuestEvent[] = [];
+	for (const line of raw.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		try {
+			out.push(JSON.parse(trimmed) as QuestEvent);
+		} catch {
+			// Skip corrupt line — never throw from a widget read path.
+		}
+	}
+	return out;
 }

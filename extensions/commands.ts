@@ -119,10 +119,52 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 			return;
 		}
 	}
+	const previousStatus = workflow.status;
 	workflow.status = newStatus as QuestStatus;
 	workflow.updatedAt = new Date().toISOString();
 	saveQuestWorkflow(questDir, workflow);
+	// M4-2: UAT doorbell at the verification-ready → uat-ready boundary (ADR 016).
+	// Widget mood shift is handled by M3-1 (Hearth Widget Needs-you mood) — no
+	// wiring required here.
+	fireUatDoorbell(ctx, workflow, questDir, previousStatus);
 	ctx.ui.notify(`Quest '${id}' status → ${newStatus}`, "info");
+}
+
+/**
+ * UAT Doorbell (ADR 016): single, one-shot multi-channel summons at the
+ * `verification-ready → uat-ready` transition. Idempotent — once fired for a
+ * quest, never fires again (even after uat-ready ↔ uat-failed loops).
+ *
+ * Channels:
+ *  - Terminal bell (BEL = \x07) — silent on terminals with the bell disabled
+ *  - OS notification via `ctx.ui.notify`
+ *  - Widget mood shift — handled by M3-1, not wired here.
+ *
+ * The `ctx` parameter is intentionally structural so that this helper can be
+ * called from both `CommandContext` (slash-command path) and `ToolContext`
+ * (auto-router via `quest_write_workflow`).
+ */
+export function fireUatDoorbell(
+	ctx: { ui: { notify: (msg: string, level?: "error" | "info" | "warning") => void } },
+	workflow: QuestWorkflow,
+	questDir: string,
+	previousStatus: QuestStatus,
+) {
+	if (previousStatus !== "verification-ready") return;
+	if (workflow.status !== "uat-ready") return;
+	if (workflow.uat_doorbell_fired_at) return;
+
+	// Channel 1: terminal bell. Use \x07 (BEL). Silent on terminals with the
+	// bell disabled — that's an OS/terminal setting, nothing for us to do.
+	process.stdout.write("\x07");
+
+	// Channel 2: OS notification via pi's existing facility.
+	const label = workflow.title && workflow.title.trim().length > 0 ? workflow.title : workflow.id;
+	ctx.ui.notify(`UAT pending for ${label}`, "info");
+
+	// Persist the idempotency marker.
+	workflow.uat_doorbell_fired_at = new Date().toISOString();
+	saveQuestWorkflow(questDir, workflow);
 }
 
 export async function cmdIntake(ctx: CommandContext, args: string[]) {

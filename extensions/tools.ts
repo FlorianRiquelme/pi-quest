@@ -8,6 +8,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { isValidTransition, QuestStatus } from "../lib.js";
+import { fireUatDoorbell } from "./commands.js";
 import { MAX_SUBAGENT_CAPTURE_CHARS } from "./fs-utils.js";
 import { ensureDir } from "./fs-utils.js";
 import { questDirPath } from "./paths.js";
@@ -383,9 +384,13 @@ export async function executeQuestWriteWorkflow(
 			}
 		}
 
+		const previousStatus = workflow.status;
 		workflow.status = params.status as QuestStatus;
 		workflow.updatedAt = new Date().toISOString();
 		saveQuestWorkflow(questDir, workflow);
+		// M4-2: UAT doorbell at the verification-ready → uat-ready boundary
+		// (ADR 016). Widget mood shift is M3-1's responsibility — not here.
+		fireUatDoorbell(ctx, workflow, questDir, previousStatus);
 		return {
 			content: [
 				{

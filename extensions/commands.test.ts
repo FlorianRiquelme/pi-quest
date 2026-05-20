@@ -13,6 +13,11 @@ vi.mock('./git.js', () => ({
   getCurrentCommit: vi.fn().mockResolvedValue('abc1234'),
 }));
 
+vi.mock('./worktree.js', () => ({
+  getHeadSha: vi.fn().mockResolvedValue('basesha-deadbeef'),
+  ensureQuestBranch: vi.fn().mockResolvedValue({ questBranch: 'quest/q1', created: true }),
+}));
+
 describe('commands', () => {
   let notifyCalls: Array<{ msg: string; level: string }> = [];
 
@@ -452,6 +457,89 @@ describe('commands', () => {
       });
     });
   });
+
+    describe('Quest Branch capture (M1-3)', () => {
+      const fullPassPlan =
+        '---\n' +
+        'blast_radius:\n' +
+        '  in_scope:\n' +
+        '    - src/foo.ts\n' +
+        'pre_mortem:\n' +
+        '  most_likely_failure: oops\n' +
+        'compiler_diagnostics: []\n' +
+        'launch_review:\n' +
+        '  signed_off_at: "2026-05-20T11:30:00Z"\n' +
+        '  signed_off_by: user\n' +
+        '---\n\n# Plan\n';
+
+      it('records baseSha and creates Quest Branch on first entry to executing', async () => {
+        const worktree = await import('./worktree.js');
+        (worktree.getHeadSha as any).mockResolvedValue('basesha-deadbeef');
+        (worktree.ensureQuestBranch as any).mockResolvedValue({
+          questBranch: 'quest/q1',
+          created: true,
+        });
+
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+            id: 'q1',
+            title: 'Q',
+            status: 'launch-review',
+            createdAt: '2024-01-01T00:00:00Z',
+            updatedAt: '2024-01-01T00:00:00Z',
+            source: {},
+            artifacts: { handoff: 'H.md', plan: 'IMPLEMENTATION_PLAN.md' },
+          }),
+          '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': fullPassPlan,
+        });
+
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+
+        const persisted = JSON.parse(
+          vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+        );
+        expect(persisted.status).toBe('executing');
+        expect(persisted.baseSha).toBe('basesha-deadbeef');
+        expect(persisted.questBranch).toBe('quest/q1');
+
+        expect(worktree.getHeadSha).toHaveBeenCalledWith('/project');
+        expect(worktree.ensureQuestBranch).toHaveBeenCalledWith({
+          repoRoot: '/project',
+          questId: 'q1',
+          baseSha: 'basesha-deadbeef',
+        });
+      });
+
+      it('is idempotent — second entry to executing does not re-capture baseSha', async () => {
+        const worktree = await import('./worktree.js');
+        (worktree.getHeadSha as any).mockClear();
+        (worktree.ensureQuestBranch as any).mockClear();
+
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+            id: 'q1',
+            title: 'Q',
+            status: 'blocked',
+            createdAt: '2024-01-01T00:00:00Z',
+            updatedAt: '2024-01-01T00:00:00Z',
+            source: {},
+            artifacts: { handoff: 'H.md', plan: 'IMPLEMENTATION_PLAN.md' },
+            baseSha: 'preserved-sha',
+            questBranch: 'quest/q1',
+          }),
+        });
+
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+
+        const persisted = JSON.parse(
+          vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+        );
+        expect(persisted.baseSha).toBe('preserved-sha');
+        expect(worktree.getHeadSha).not.toHaveBeenCalled();
+      });
+    });
 
   describe('cmdConfig', () => {
     it('shows default config when no overrides exist', async () => {

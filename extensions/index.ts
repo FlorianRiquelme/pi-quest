@@ -41,7 +41,7 @@ import {
 	renderResultQuestRunWorkItem,
 	renderResultQuestWorkItemStatus,
 } from "./tools.js";
-import { reapOrphanedRuns, startLivenessSupervisor } from "./agents.js";
+import { reapOrphanedRuns, reapOrphanWorktrees, startLivenessSupervisor } from "./agents.js";
 import { setQuestWidget } from "./ui/widget.js";
 
 export default function piQuestExtension(pi: ExtensionAPI) {
@@ -306,6 +306,12 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 		} catch {
 			/* never let reconciliation crash the session */
 		}
+		// ADR 011: prune orphan Run Worktrees alongside orphan runs. This is
+		// fire-and-forget — git invocations are async and shouldn't block
+		// `session_start`.
+		void reapOrphanWorktrees(ctx.cwd).catch(() => {
+			/* never let reconciliation crash the session */
+		});
 		// ADR 010 §3: start the 60s synthetic liveness loop. The interval
 		// unrefs itself so it doesn't keep pi alive on its own.
 		startLivenessSupervisor(ctx.cwd);

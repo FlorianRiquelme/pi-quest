@@ -8,6 +8,8 @@ import {
 	compactRunLine,
 	recordRunFinished,
 	reapOrphanedRuns,
+	reapOrphanWorktrees,
+	mergeCompletedRun,
 	recordSemanticBeat,
 	emitSyntheticLivenessBeats,
 	startSubagentRun,
@@ -33,6 +35,17 @@ vi.mock('node:os', () => ({ tmpdir: () => '/tmp' }));
 
 vi.mock('./paths.js', () => ({
   AGENTS_DIR: '/agents',
+}));
+
+vi.mock('./worktree.js', () => ({
+  createRunWorktree: vi.fn(),
+  removeRunWorktree: vi.fn().mockResolvedValue(undefined),
+  listRunWorktrees: vi.fn().mockResolvedValue([]),
+  mergeRunBranchIntoQuest: vi.fn().mockResolvedValue({ ok: true }),
+  worktreePathFor: (repoRoot: string, questId: string, runId: string) =>
+    `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+  getHeadSha: vi.fn().mockResolvedValue('basesha'),
+  ensureQuestBranch: vi.fn().mockResolvedValue({ questBranch: 'quest/q1', created: false }),
 }));
 
 describe('agents', () => {
@@ -181,6 +194,14 @@ describe('agents', () => {
         '---\nname: quest-implementation\ndescription: impl\n---\nBody.',
       );
 
+      const worktree = await import('./worktree');
+      (worktree.createRunWorktree as any).mockImplementation(
+        async ({ questId, runId, repoRoot }: any) => ({
+          worktreePath: `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+          runBranch: `quest-run/${questId}/${runId}`,
+        }),
+      );
+
       const { spawn } = await import('node:child_process');
       const child = makeFakeChild();
       (spawn as any).mockReturnValue(child);
@@ -200,12 +221,223 @@ describe('agents', () => {
       expect(child.unref).toHaveBeenCalledTimes(1);
     });
 
+    it('creates a Run Worktree before spawning and uses it as cwd', async () => {
+      vol.mkdirSync('/agents', { recursive: true });
+      vol.mkdirSync('/tmp', { recursive: true });
+      vol.writeFileSync(
+        '/agents/quest-implementation.md',
+        '---\nname: quest-implementation\ndescription: impl\n---\nBody.',
+      );
+
+      const worktree = await import('./worktree');
+      (worktree.createRunWorktree as any).mockImplementation(
+        async ({ questId, runId, repoRoot }: any) => ({
+          worktreePath: `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+          runBranch: `quest-run/${questId}/${runId}`,
+        }),
+      );
+
+      const { spawn } = await import('node:child_process');
+      const child = makeFakeChild();
+      (spawn as any).mockReturnValue(child);
+
+      const summary = await startSubagentRun({
+        cwd: '/project',
+        questId: 'q1',
+        questDir: '/project/.pi/quests/q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        task: 'do the thing',
+      });
+
+      expect(worktree.createRunWorktree).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repoRoot: '/project',
+          questId: 'q1',
+          runId: summary.runId,
+        }),
+      );
+
+      const spawnOpts = (spawn as any).mock.calls[0][2];
+      expect(spawnOpts.cwd).toBe(`/project/.pi/quests/q1/worktrees/${summary.runId}`);
+    });
+
+    it('injects PI_QUEST_HOME (main-checkout .pi/) into the spawn env', async () => {
+      vol.mkdirSync('/agents', { recursive: true });
+      vol.mkdirSync('/tmp', { recursive: true });
+      vol.writeFileSync(
+        '/agents/quest-implementation.md',
+        '---\nname: quest-implementation\ndescription: impl\n---\nBody.',
+      );
+
+      const worktree = await import('./worktree');
+      (worktree.createRunWorktree as any).mockImplementation(
+        async ({ questId, runId, repoRoot }: any) => ({
+          worktreePath: `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+          runBranch: `quest-run/${questId}/${runId}`,
+        }),
+      );
+
+      const { spawn } = await import('node:child_process');
+      const child = makeFakeChild();
+      (spawn as any).mockReturnValue(child);
+
+      await startSubagentRun({
+        cwd: '/project',
+        questId: 'q1',
+        questDir: '/project/.pi/quests/q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        task: 'do the thing',
+      });
+
+      const spawnOpts = (spawn as any).mock.calls[0][2];
+      expect(spawnOpts.env.PI_QUEST_HOME).toBe('/project/.pi');
+    });
+
+    it('detects bun lockfile and runs `bun install` inside the worktree before spawning', async () => {
+      vol.mkdirSync('/agents', { recursive: true });
+      vol.mkdirSync('/tmp', { recursive: true });
+      vol.writeFileSync(
+        '/agents/quest-implementation.md',
+        '---\nname: quest-implementation\ndescription: impl\n---\nBody.',
+      );
+      // Seed bun.lock at the main-checkout root.
+      vol.mkdirSync('/project', { recursive: true });
+      vol.writeFileSync('/project/bun.lock', '');
+
+      const worktree = await import('./worktree');
+      (worktree.createRunWorktree as any).mockImplementation(
+        async ({ questId, runId, repoRoot }: any) => ({
+          worktreePath: `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+          runBranch: `quest-run/${questId}/${runId}`,
+        }),
+      );
+
+      const { spawn } = await import('node:child_process');
+      const installChild = makeFakeChild();
+      const subagentChild = makeFakeChild();
+      let call = 0;
+      (spawn as any).mockImplementation((cmd: string, args: string[], opts: any) => {
+        call++;
+        if (call === 1) {
+          // First spawn must be the install.
+          expect(cmd).toBe('bun');
+          expect(args).toEqual(['install']);
+          expect(opts.cwd).toMatch(/\.pi\/quests\/q1\/worktrees\//);
+          // Mimic install completing successfully via close event.
+          queueMicrotask(() => installChild.emit('close', 0));
+          return installChild;
+        }
+        return subagentChild;
+      });
+
+      const summary = await startSubagentRun({
+        cwd: '/project',
+        questId: 'q1',
+        questDir: '/project/.pi/quests/q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        task: 'do the thing',
+      });
+
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(summary.status).toBe('running');
+    });
+
+    it('detects pnpm lockfile (priority over bun if both present)', async () => {
+      vol.mkdirSync('/agents', { recursive: true });
+      vol.mkdirSync('/tmp', { recursive: true });
+      vol.writeFileSync(
+        '/agents/quest-implementation.md',
+        '---\nname: quest-implementation\ndescription: impl\n---\nBody.',
+      );
+      vol.mkdirSync('/project', { recursive: true });
+      vol.writeFileSync('/project/pnpm-lock.yaml', '');
+      vol.writeFileSync('/project/bun.lock', '');
+
+      const worktree = await import('./worktree');
+      (worktree.createRunWorktree as any).mockImplementation(
+        async ({ questId, runId, repoRoot }: any) => ({
+          worktreePath: `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+          runBranch: `quest-run/${questId}/${runId}`,
+        }),
+      );
+
+      const { spawn } = await import('node:child_process');
+      const installChild = makeFakeChild();
+      const subagentChild = makeFakeChild();
+      let call = 0;
+      (spawn as any).mockImplementation((cmd: string, _args: string[], _opts: any) => {
+        call++;
+        if (call === 1) {
+          expect(cmd).toBe('pnpm');
+          queueMicrotask(() => installChild.emit('close', 0));
+          return installChild;
+        }
+        return subagentChild;
+      });
+
+      await startSubagentRun({
+        cwd: '/project',
+        questId: 'q1',
+        questDir: '/project/.pi/quests/q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        task: 'do the thing',
+      });
+
+      expect(spawn).toHaveBeenCalledTimes(2);
+    });
+
+    it('skips install when no lockfile is present', async () => {
+      vol.mkdirSync('/agents', { recursive: true });
+      vol.mkdirSync('/tmp', { recursive: true });
+      vol.writeFileSync(
+        '/agents/quest-implementation.md',
+        '---\nname: quest-implementation\ndescription: impl\n---\nBody.',
+      );
+      vol.mkdirSync('/project', { recursive: true });
+      // No lockfile.
+
+      const worktree = await import('./worktree');
+      (worktree.createRunWorktree as any).mockImplementation(
+        async ({ questId, runId, repoRoot }: any) => ({
+          worktreePath: `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+          runBranch: `quest-run/${questId}/${runId}`,
+        }),
+      );
+
+      const { spawn } = await import('node:child_process');
+      const subagentChild = makeFakeChild();
+      (spawn as any).mockReturnValue(subagentChild);
+
+      await startSubagentRun({
+        cwd: '/project',
+        questId: 'q1',
+        questDir: '/project/.pi/quests/q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        task: 'do the thing',
+      });
+
+      expect(spawn).toHaveBeenCalledTimes(1);
+    });
+
     it('injects PI_QUEST_QUEST_ID, PI_QUEST_RUN_ID, PI_QUEST_WORK_ITEM_ID into the spawn env', async () => {
       vol.mkdirSync('/agents', { recursive: true });
       vol.mkdirSync('/tmp', { recursive: true });
       vol.writeFileSync(
         '/agents/quest-implementation.md',
         '---\nname: quest-implementation\ndescription: impl\n---\nBody.',
+      );
+
+      const worktree = await import('./worktree');
+      (worktree.createRunWorktree as any).mockImplementation(
+        async ({ questId, runId, repoRoot }: any) => ({
+          worktreePath: `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+          runBranch: `quest-run/${questId}/${runId}`,
+        }),
       );
 
       const { spawn } = await import('node:child_process');
@@ -571,6 +803,232 @@ describe('agents', () => {
         statusPath: '/status.json',
       };
       expect(compactRunLine(summary)).toContain('exit=1');
+    });
+  });
+
+  describe('mergeCompletedRun (M1-3)', () => {
+    beforeEach(async () => {
+      const worktree = await import('./worktree');
+      (worktree.mergeRunBranchIntoQuest as any).mockReset();
+      (worktree.removeRunWorktree as any).mockReset().mockResolvedValue(undefined);
+    });
+
+    it('invokes mergeRunBranchIntoQuest and removes worktree on success', async () => {
+      vol.mkdirSync('/project/.pi/quests/q1/runs', { recursive: true });
+      const runSummary: BackgroundRunSummary = {
+        runId: 'r1',
+        questId: 'q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        status: 'completed',
+        startedAt: '2024-01-01T12:00:00Z',
+        updatedAt: '2024-01-01T12:01:00Z',
+        completedAt: '2024-01-01T12:01:00Z',
+        stdoutPath: '/x',
+        stderrPath: '/y',
+        reportPath: '/z',
+        statusPath: '/project/.pi/quests/q1/runs/r1.json',
+      };
+      vol.writeFileSync('/project/.pi/quests/q1/runs/r1.json', JSON.stringify(runSummary));
+
+      const worktree = await import('./worktree');
+      (worktree.mergeRunBranchIntoQuest as any).mockResolvedValue({ ok: true });
+
+      await mergeCompletedRun({
+        repoRoot: '/project',
+        questDir: '/project/.pi/quests/q1',
+        questId: 'q1',
+        runId: 'r1',
+        workItemId: '001',
+        runBranch: 'quest-run/q1/r1',
+        questBranch: 'quest/q1',
+        worktreePath: '/project/.pi/quests/q1/worktrees/r1',
+      });
+
+      expect(worktree.mergeRunBranchIntoQuest).toHaveBeenCalledWith({
+        repoRoot: '/project',
+        questBranch: 'quest/q1',
+        runBranch: 'quest-run/q1/r1',
+      });
+      expect(worktree.removeRunWorktree).toHaveBeenCalledWith(
+        '/project/.pi/quests/q1/worktrees/r1',
+      );
+    });
+
+    it('emits anomaly_detected (tier: halt, rule: merge_conflict) on merge failure', async () => {
+      vol.mkdirSync('/project/.pi/quests/q1/runs', { recursive: true });
+      const runSummary: BackgroundRunSummary = {
+        runId: 'r1',
+        questId: 'q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        status: 'completed',
+        startedAt: '2024-01-01T12:00:00Z',
+        updatedAt: '2024-01-01T12:01:00Z',
+        completedAt: '2024-01-01T12:01:00Z',
+        stdoutPath: '/x',
+        stderrPath: '/y',
+        reportPath: '/z',
+        statusPath: '/project/.pi/quests/q1/runs/r1.json',
+      };
+      vol.writeFileSync('/project/.pi/quests/q1/runs/r1.json', JSON.stringify(runSummary));
+
+      const worktree = await import('./worktree');
+      (worktree.mergeRunBranchIntoQuest as any).mockResolvedValue({
+        ok: false,
+        conflict: 'CONFLICT (content): src/foo.ts',
+      });
+
+      await mergeCompletedRun({
+        repoRoot: '/project',
+        questDir: '/project/.pi/quests/q1',
+        questId: 'q1',
+        runId: 'r1',
+        workItemId: '001',
+        runBranch: 'quest-run/q1/r1',
+        questBranch: 'quest/q1',
+        worktreePath: '/project/.pi/quests/q1/worktrees/r1',
+      });
+
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+      const anomaly = events.find((e) => e.event === 'anomaly_detected');
+      expect(anomaly).toBeDefined();
+      expect(anomaly.tier).toBe('halt');
+      expect(anomaly.rule).toBe('merge_conflict');
+      expect(anomaly.runId).toBe('r1');
+      expect(anomaly.details.runBranch).toBe('quest-run/q1/r1');
+      expect(anomaly.details.questBranch).toBe('quest/q1');
+      expect(anomaly.details.conflict).toContain('CONFLICT');
+
+      // Run status should be flipped to failed.
+      const updated = JSON.parse(
+        vol.readFileSync('/project/.pi/quests/q1/runs/r1.json', 'utf-8') as string,
+      );
+      expect(updated.status).toBe('failed');
+    });
+  });
+
+  describe('reapOrphanWorktrees (M1-3)', () => {
+    beforeEach(async () => {
+      const worktree = await import('./worktree');
+      (worktree.listRunWorktrees as any).mockReset();
+      (worktree.removeRunWorktree as any).mockReset().mockResolvedValue(undefined);
+    });
+
+    it('prunes worktrees whose run summary does not exist', async () => {
+      const worktree = await import('./worktree');
+      (worktree.listRunWorktrees as any).mockResolvedValue([
+        { path: '/project', branch: 'main' },
+        {
+          path: '/project/.pi/quests/q1/worktrees/orphan-run',
+          branch: 'quest-run/q1/orphan-run',
+        },
+      ]);
+
+      // No runs/orphan-run.json exists → orphan.
+      vol.mkdirSync('/project/.pi/quests/q1/runs', { recursive: true });
+
+      const pruned = await reapOrphanWorktrees('/project');
+
+      expect(pruned).toEqual(['/project/.pi/quests/q1/worktrees/orphan-run']);
+      expect(worktree.removeRunWorktree).toHaveBeenCalledWith(
+        '/project/.pi/quests/q1/worktrees/orphan-run',
+      );
+    });
+
+    it('prunes worktrees whose run status is orphaned/cancelled/failed/completed', async () => {
+      const worktree = await import('./worktree');
+      (worktree.listRunWorktrees as any).mockResolvedValue([
+        {
+          path: '/project/.pi/quests/q1/worktrees/r-orphaned',
+          branch: 'quest-run/q1/r-orphaned',
+        },
+        {
+          path: '/project/.pi/quests/q1/worktrees/r-cancelled',
+          branch: 'quest-run/q1/r-cancelled',
+        },
+        {
+          path: '/project/.pi/quests/q1/worktrees/r-failed',
+          branch: 'quest-run/q1/r-failed',
+        },
+        {
+          path: '/project/.pi/quests/q1/worktrees/r-completed',
+          branch: 'quest-run/q1/r-completed',
+        },
+      ]);
+
+      vol.mkdirSync('/project/.pi/quests/q1/runs', { recursive: true });
+      const mkRun = (runId: string, status: BackgroundRunSummary['status']) => {
+        const summary: BackgroundRunSummary = {
+          runId,
+          questId: 'q1',
+          workItemId: '001',
+          agentName: 'quest-implementation',
+          status,
+          startedAt: '2024-01-01T12:00:00Z',
+          updatedAt: '2024-01-01T12:01:00Z',
+          stdoutPath: '/x',
+          stderrPath: '/y',
+          reportPath: '/z',
+          statusPath: `/project/.pi/quests/q1/runs/${runId}.json`,
+        };
+        vol.writeFileSync(`/project/.pi/quests/q1/runs/${runId}.json`, JSON.stringify(summary));
+      };
+      mkRun('r-orphaned', 'orphaned');
+      mkRun('r-cancelled', 'cancelled');
+      mkRun('r-failed', 'failed');
+      mkRun('r-completed', 'completed');
+
+      const pruned = await reapOrphanWorktrees('/project');
+      expect(pruned.sort()).toEqual([
+        '/project/.pi/quests/q1/worktrees/r-cancelled',
+        '/project/.pi/quests/q1/worktrees/r-completed',
+        '/project/.pi/quests/q1/worktrees/r-failed',
+        '/project/.pi/quests/q1/worktrees/r-orphaned',
+      ]);
+    });
+
+    it('preserves worktrees whose run is still running', async () => {
+      const worktree = await import('./worktree');
+      (worktree.listRunWorktrees as any).mockResolvedValue([
+        {
+          path: '/project/.pi/quests/q1/worktrees/r-live',
+          branch: 'quest-run/q1/r-live',
+        },
+      ]);
+      vol.mkdirSync('/project/.pi/quests/q1/runs', { recursive: true });
+      const summary: BackgroundRunSummary = {
+        runId: 'r-live',
+        questId: 'q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        status: 'running',
+        startedAt: '2024-01-01T12:00:00Z',
+        updatedAt: '2024-01-01T12:01:00Z',
+        stdoutPath: '/x',
+        stderrPath: '/y',
+        reportPath: '/z',
+        statusPath: '/project/.pi/quests/q1/runs/r-live.json',
+      };
+      vol.writeFileSync('/project/.pi/quests/q1/runs/r-live.json', JSON.stringify(summary));
+
+      const pruned = await reapOrphanWorktrees('/project');
+      expect(pruned).toEqual([]);
+      expect(worktree.removeRunWorktree).not.toHaveBeenCalled();
+    });
+
+    it('ignores the main checkout worktree (no quest-run/ branch)', async () => {
+      const worktree = await import('./worktree');
+      (worktree.listRunWorktrees as any).mockResolvedValue([
+        { path: '/project', branch: 'main' },
+      ]);
+      const pruned = await reapOrphanWorktrees('/project');
+      expect(pruned).toEqual([]);
+      expect(worktree.removeRunWorktree).not.toHaveBeenCalled();
     });
   });
 });

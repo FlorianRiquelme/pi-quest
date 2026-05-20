@@ -8,7 +8,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { isValidTransition, QuestStatus } from "../lib.js";
-import { fireUatDoorbell, runLaunchGate } from "./commands.js";
+import { captureQuestBranchOnExecuting, fireUatDoorbell, runLaunchGate } from "./commands.js";
 import { MAX_SUBAGENT_CAPTURE_CHARS } from "./fs-utils.js";
 import { ensureDir } from "./fs-utils.js";
 import { questDirPath } from "./paths.js";
@@ -80,6 +80,9 @@ export async function executeQuestRunWorkItem(
 		`Write your compact report to: ${path.join(questDir, "reports", `${params.workItemId}.md`)}`,
 	].join("\n");
 
+	// Pull Quest Branch + Base SHA from workflow if they have already been
+	// captured (ADR 011 §2 — captured on first entry to executing).
+	const workflow = loadQuestWorkflow(questDir);
 	const summary = await startSubagentRun({
 		cwd: ctx.cwd,
 		questId: params.questId,
@@ -88,6 +91,8 @@ export async function executeQuestRunWorkItem(
 		agentName: "quest-implementation",
 		task,
 		model: params.optionalModel,
+		questBranch: workflow?.questBranch,
+		baseSha: workflow?.baseSha,
 		onStatus: (run) => {
 			const active = activeRuns.size;
 			ctx.ui.setStatus("quest", active > 0 ? `quest: ${active} work item(s) running` : undefined);
@@ -407,6 +412,22 @@ export async function executeQuestWriteWorkflow(
 					},
 				};
 			}
+		}
+
+		// Quest Branch capture (ADR 011 §2): first entry to executing only.
+		try {
+			await captureQuestBranchOnExecuting(ctx.cwd, workflow, params.status as QuestStatus);
+		} catch (err) {
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `Quest Branch capture failed: ${err instanceof Error ? err.message : String(err)}`,
+					},
+				],
+				isError: true,
+				details: { currentStatus: workflow.status, requestedStatus: params.status },
+			};
 		}
 
 		const previousStatus = workflow.status;

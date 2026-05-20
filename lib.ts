@@ -49,6 +49,16 @@ export interface QuestWorkflow {
 	 * subsequent `uat-ready` re-entries (e.g. uat-failed → uat-ready loops).
 	 */
 	uat_doorbell_fired_at?: string;
+	/**
+	 * The git SHA the quest forked from, captured at first entry to `executing`
+	 * (ADR 011 §2). Anchor for the Quest Branch and every Run Worktree.
+	 */
+	baseSha?: string;
+	/**
+	 * Name of the Quest Branch (`quest/<questId>`), captured alongside `baseSha`.
+	 * Persisted so the merge target survives across pi restarts.
+	 */
+	questBranch?: string;
 }
 
 export interface CurrentQuestState {

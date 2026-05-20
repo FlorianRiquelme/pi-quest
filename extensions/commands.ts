@@ -16,6 +16,7 @@ import {
 } from "../lib.js";
 import { ensureDir } from "./fs-utils.js";
 import { getCurrentBranch, getCurrentCommit } from "./git.js";
+import { ensureQuestBranch, getHeadSha } from "./worktree.js";
 import {
 	evaluateLaunchGate,
 	readPlanFrontmatter,
@@ -130,6 +131,16 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 		const gateResult = runLaunchGate(ctx, id, questDir, workflow, force);
 		if (gateResult.outcome === "blocked") return;
 	}
+	// Quest Branch capture (ADR 011 §2): first entry to executing only.
+	try {
+		await captureQuestBranchOnExecuting(ctx.cwd, workflow, newStatus as QuestStatus);
+	} catch (err) {
+		ctx.ui.notify(
+			`Quest Branch capture failed: ${err instanceof Error ? err.message : String(err)}`,
+			"error",
+		);
+		return;
+	}
 	const previousStatus = workflow.status;
 	workflow.status = newStatus as QuestStatus;
 	workflow.updatedAt = new Date().toISOString();
@@ -206,6 +217,35 @@ export async function tryAutoRoute(ctx: CommandContext): Promise<boolean> {
 	}
 
 	return false;
+}
+
+/**
+ * Quest Branch capture (ADR 011 §2).
+ *
+ * On a quest's **first** transition into `executing`, record the current HEAD
+ * of the main checkout as the Base SHA and create the Quest Branch
+ * `quest/<questId>` from that SHA. Both pieces are persisted on the workflow
+ * (`baseSha`, `questBranch`) so subsequent restarts and re-entries to
+ * `executing` (e.g. blocked → executing) are no-ops.
+ *
+ * Mutates `workflow` in place when capture fires; the caller persists.
+ */
+export async function captureQuestBranchOnExecuting(
+	cwd: string,
+	workflow: QuestWorkflow,
+	newStatus: QuestStatus,
+): Promise<void> {
+	if (newStatus !== "executing") return;
+	if (workflow.baseSha && workflow.questBranch) return;
+
+	const baseSha = await getHeadSha(cwd);
+	const { questBranch } = await ensureQuestBranch({
+		repoRoot: cwd,
+		questId: workflow.id,
+		baseSha,
+	});
+	workflow.baseSha = baseSha;
+	workflow.questBranch = questBranch;
 }
 
 /**

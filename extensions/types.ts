@@ -42,4 +42,10 @@ export interface BackgroundRunSummary {
 	stderrPath: string;
 	reportPath: string;
 	statusPath: string;
+	/** Path to the Run Worktree where this run executed (ADR 011). */
+	worktreePath?: string;
+	/** Run Branch ref (e.g. `quest-run/<questId>/<runId>`). */
+	runBranch?: string;
+	/** Quest Branch this run targets (e.g. `quest/<questId>`). */
+	questBranch?: string;
 }

@@ -31,6 +31,25 @@ vi.mock('@earendil-works/pi-ai', () => ({
   StringEnum: (values: readonly string[]) => ({ type: 'string', enum: [...values] }),
 }));
 
+vi.mock('./worktree.js', () => ({
+  getHeadSha: vi.fn().mockResolvedValue('basesha-deadbeef'),
+  ensureQuestBranch: vi
+    .fn()
+    .mockImplementation(async ({ questId }: { questId: string }) => ({
+      questBranch: `quest/${questId}`,
+      created: true,
+    })),
+  createRunWorktree: vi.fn().mockImplementation(async ({ questId, runId, repoRoot }: any) => ({
+    worktreePath: `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+    runBranch: `quest-run/${questId}/${runId}`,
+  })),
+  removeRunWorktree: vi.fn().mockResolvedValue(undefined),
+  listRunWorktrees: vi.fn().mockResolvedValue([]),
+  mergeRunBranchIntoQuest: vi.fn().mockResolvedValue({ ok: true }),
+  worktreePathFor: (repoRoot: string, questId: string, runId: string) =>
+    `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+}));
+
 import { fs, vol } from 'memfs';
 import piQuestExtension from './index';
 

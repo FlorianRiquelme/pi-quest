@@ -18,6 +18,13 @@ import {
 } from "./fs-utils.js";
 import { validateEvent } from "./events.js";
 import { AGENTS_DIR } from "./paths.js";
+import {
+	createRunWorktree,
+	listRunWorktrees,
+	mergeRunBranchIntoQuest,
+	removeRunWorktree,
+	worktreePathFor,
+} from "./worktree.js";
 import type { AgentDef, BackgroundRunSummary } from "./types.js";
 
 export const MODEL_ALIASES: Record<string, string> = {
@@ -77,6 +84,42 @@ export async function writePromptToTempFile(
 		await fs.promises.writeFile(filePath, prompt, { encoding: "utf-8", mode: 0o600 });
 	});
 	return { dir: tmpDir, filePath };
+}
+
+/**
+ * Detect the project's package manager from the lockfile in `repoRoot`, with
+ * the priority order defined in ADR 011 §6.
+ *
+ *   pnpm-lock.yaml   → pnpm
+ *   bun.lock         → bun
+ *   yarn.lock        → yarn
+ *   package-lock.json → npm
+ *   (none)           → undefined (no install command)
+ */
+export function detectPackageManager(repoRoot: string): "pnpm" | "bun" | "yarn" | "npm" | undefined {
+	if (fs.existsSync(path.join(repoRoot, "pnpm-lock.yaml"))) return "pnpm";
+	if (fs.existsSync(path.join(repoRoot, "bun.lock"))) return "bun";
+	if (fs.existsSync(path.join(repoRoot, "yarn.lock"))) return "yarn";
+	if (fs.existsSync(path.join(repoRoot, "package-lock.json"))) return "npm";
+	return undefined;
+}
+
+/**
+ * Run `<pm> install` inside `worktreePath`. Resolves with the exit code.
+ * Errors during spawn surface as exit code 1.
+ */
+function runInstallInWorktree(
+	pm: "pnpm" | "bun" | "yarn" | "npm",
+	worktreePath: string,
+): Promise<number> {
+	return new Promise((resolve) => {
+		const proc = spawn(pm, ["install"], {
+			cwd: worktreePath,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		proc.on("close", (code) => resolve(code ?? 0));
+		proc.on("error", () => resolve(1));
+	});
 }
 
 export async function runSubagent(options: {
@@ -275,6 +318,14 @@ export async function startSubagentRun(options: {
 	model?: string;
 	tools?: string[];
 	systemPrompt?: string;
+	/**
+	 * Quest Branch ref name (e.g. `quest/<questId>`). When provided, the new
+	 * Run Worktree is checked out from this branch; on completion, the Run
+	 * Branch is merged back into it. Defaults to `quest/<questId>`.
+	 */
+	questBranch?: string;
+	/** Base SHA the Quest forked from. Passed through to `createRunWorktree`. */
+	baseSha?: string;
 	onStatus?: (summary: BackgroundRunSummary) => void;
 }): Promise<BackgroundRunSummary> {
 	const agentDef = getAgentDef(options.agentName);
@@ -306,6 +357,50 @@ export async function startSubagentRun(options: {
 	const reportPath = path.join(options.questDir, "reports", `${options.workItemId}.md`);
 	const startedAt = new Date().toISOString();
 	const invocation = getPiInvocation(args);
+
+	// Per ADR 011: create a Run Worktree before spawning. The subagent runs
+	// inside the worktree on its own Run Branch. `options.questBranch` falls
+	// back to `quest/<questId>` for callers that have not yet captured the
+	// Quest Branch onto workflow.json (defence-in-depth — the executing-status
+	// hook owns first-time capture).
+	const questBranch = options.questBranch ?? `quest/${options.questId}`;
+	const worktreeResult = await createRunWorktree({
+		repoRoot: options.cwd,
+		questId: options.questId,
+		runId,
+		baseSha: options.baseSha ?? "HEAD",
+		questBranch,
+	});
+	const worktreePath = worktreeResult.worktreePath;
+
+	// Detect package manager from the **main checkout** and run the matching
+	// install command **inside the worktree** before the subagent starts.
+	const pm = detectPackageManager(options.cwd);
+	if (pm) {
+		const installExit = await runInstallInWorktree(pm, worktreePath);
+		if (installExit !== 0) {
+			// Best-effort anomaly log and abort — caller sees a failed install
+			// and can investigate.
+			try {
+				const telemetryPath = path.join(options.questDir, "telemetry", "events.jsonl");
+				ensureDir(path.dirname(telemetryPath));
+				const event = validateEvent({
+					event: "anomaly_detected",
+					timestamp: new Date().toISOString(),
+					questId: options.questId,
+					tier: "halt",
+					rule: "install_failed",
+					should_pause: false,
+					details: { packageManager: pm, exitCode: installExit, worktreePath },
+				});
+				fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+			} catch {
+				/* never let telemetry crash the spawn path */
+			}
+			throw new Error(`${pm} install in ${worktreePath} exited with code ${installExit}`);
+		}
+	}
+
 	// Per ADR 009: subagents must survive parent exit. `detached: true` plus
 	// `child.unref()` (below) detaches the child from the parent's process
 	// group so closing pi doesn't SIGHUP all background runs.
@@ -315,8 +410,12 @@ export async function startSubagentRun(options: {
 	// without guessing. The tools also accept the IDs as explicit params
 	// (Approach B) — env vars exist so the agent's prompt can read them out
 	// of its own process environment.
+	//
+	// Per ADR 011 §5: inject PI_QUEST_HOME (absolute path to the main
+	// checkout's `.pi/`) so tools running inside the worktree can resolve
+	// quest state — the worktree has no `.pi/` of its own.
 	const proc = spawn(invocation.command, invocation.args, {
-		cwd: options.cwd,
+		cwd: worktreePath,
 		shell: false,
 		detached: true,
 		stdio: ["ignore", "pipe", "pipe"],
@@ -325,6 +424,7 @@ export async function startSubagentRun(options: {
 			PI_QUEST_QUEST_ID: options.questId,
 			PI_QUEST_WORK_ITEM_ID: options.workItemId,
 			PI_QUEST_RUN_ID: runId,
+			PI_QUEST_HOME: path.join(options.cwd, ".pi"),
 		},
 	});
 	// Detach from the parent's event loop — closing pi while detached runs
@@ -346,6 +446,9 @@ export async function startSubagentRun(options: {
 		stderrPath,
 		reportPath,
 		statusPath,
+		worktreePath,
+		runBranch: worktreeResult.runBranch,
+		questBranch,
 	};
 	activeRuns.set(runId, summary);
 	writeRunSummary(summary);
@@ -391,6 +494,23 @@ export async function startSubagentRun(options: {
 			agentRole: "implementation",
 		});
 		options.onStatus?.(summary);
+
+		// ADR 011 §4: on Run completion, merge Run Branch into Quest Branch.
+		// Failure → halt-tier anomaly; other runs proceed independently. Fire
+		// and forget: finalize is a sync close handler, but the merge work is
+		// async. Errors are caught inside `mergeCompletedRun`.
+		if (status === "completed" && summary.runBranch && summary.questBranch) {
+			void mergeCompletedRun({
+				repoRoot: options.cwd,
+				questDir: options.questDir,
+				questId: options.questId,
+				runId,
+				workItemId: options.workItemId,
+				runBranch: summary.runBranch,
+				questBranch: summary.questBranch,
+				worktreePath,
+			});
+		}
 	};
 
 	proc.on("close", (code, signal) => {
@@ -400,6 +520,82 @@ export async function startSubagentRun(options: {
 	proc.on("error", () => finalize("failed", 1));
 
 	return summary;
+}
+
+/* ================================ Merge on completion (ADR 011 §4) ================================ */
+
+/**
+ * Merge a completed Run's Run Branch into the Quest Branch.
+ *
+ * On success: the Run Worktree is removed (best-effort).
+ * On failure (merge conflict): emit `anomaly_detected` with
+ * `tier: "halt"`, `rule: "merge_conflict"`. The Run's status is flipped to
+ * `failed` so the user can see which run blocked. Other runs' merges proceed
+ * independently — this function is single-Run scoped.
+ */
+export async function mergeCompletedRun(options: {
+	repoRoot: string;
+	questDir: string;
+	questId: string;
+	runId: string;
+	workItemId: string;
+	runBranch: string;
+	questBranch: string;
+	worktreePath: string;
+}): Promise<void> {
+	let result: { ok: boolean; conflict?: string };
+	try {
+		result = await mergeRunBranchIntoQuest({
+			repoRoot: options.repoRoot,
+			questBranch: options.questBranch,
+			runBranch: options.runBranch,
+		});
+	} catch (err) {
+		result = { ok: false, conflict: err instanceof Error ? err.message : String(err) };
+	}
+
+	if (result.ok) {
+		// Tidy up: remove the worktree now that its work has landed.
+		try {
+			await removeRunWorktree(options.worktreePath);
+		} catch {
+			/* best-effort */
+		}
+		return;
+	}
+
+	// Merge failed → halt-tier anomaly.
+	const telemetryPath = path.join(options.questDir, "telemetry", "events.jsonl");
+	ensureDir(path.dirname(telemetryPath));
+	const event = validateEvent({
+		event: "anomaly_detected",
+		timestamp: new Date().toISOString(),
+		questId: options.questId,
+		runId: options.runId,
+		tier: "halt",
+		rule: "merge_conflict",
+		should_pause: false,
+		details: {
+			workItemId: options.workItemId,
+			runBranch: options.runBranch,
+			questBranch: options.questBranch,
+			conflict: result.conflict ?? "",
+		},
+	});
+	fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+
+	// Flip the run's status to "failed" so the dashboard surfaces it.
+	const summary = readRunSummary(options.questDir, options.runId);
+	if (summary) {
+		const completedAt = new Date().toISOString();
+		const updated: BackgroundRunSummary = {
+			...summary,
+			status: "failed",
+			completedAt: summary.completedAt ?? completedAt,
+			updatedAt: completedAt,
+		};
+		writeRunSummary(updated);
+	}
 }
 
 /* ================================ Startup reaper (ADR 009) ================================ */
@@ -487,6 +683,68 @@ export function reapOrphanedRuns(cwd: string): string[] {
 	}
 
 	return reaped;
+}
+
+/* ================================ Worktree reaper (ADR 011) ================================ */
+
+/**
+ * Match a worktree path of the form `.../pi/quests/<questId>/worktrees/<runId>`
+ * and return `{ questId, runId }`, or `undefined` if the path is the main
+ * checkout or some other worktree we don't own.
+ */
+function parseRunWorktreePath(p: string): { questId: string; runId: string } | undefined {
+	// We rely on the path layout we own; segments after `quests/<id>/worktrees`.
+	const norm = p.replace(/\\/g, "/");
+	const m = norm.match(/\/\.pi\/quests\/([^/]+)\/worktrees\/([^/]+)\/?$/);
+	if (!m) return undefined;
+	return { questId: m[1], runId: m[2] };
+}
+
+/**
+ * Prune orphan Run Worktrees on startup.
+ *
+ * Policy (commented per the M1-3 spec): a worktree is an orphan when the run
+ * it represents is no longer live. Concretely we remove a worktree when:
+ *   - the `runs/<runId>.json` summary is missing, OR
+ *   - the summary's status is `orphaned`, `cancelled`, `failed`, or `completed`.
+ *
+ * Running runs are kept (their work is in flight). The main-checkout worktree
+ * — anything that does not match the `.pi/quests/<id>/worktrees/<runId>`
+ * layout — is ignored unconditionally.
+ *
+ * Returns the list of worktree paths that were actually removed (best-effort
+ * — git `worktree remove` may fail silently for already-gone paths).
+ */
+export async function reapOrphanWorktrees(cwd: string): Promise<string[]> {
+	const pruned: string[] = [];
+	const worktrees = await listRunWorktrees(cwd);
+	for (const wt of worktrees) {
+		const parsed = parseRunWorktreePath(wt.path);
+		if (!parsed) continue; // main checkout / non-quest worktree
+		const summaryPath = path.join(
+			cwd,
+			".pi",
+			"quests",
+			parsed.questId,
+			"runs",
+			`${parsed.runId}.json`,
+		);
+		const summary = readJsonIfExists<BackgroundRunSummary>(summaryPath);
+		const shouldPrune =
+			!summary ||
+			summary.status === "orphaned" ||
+			summary.status === "cancelled" ||
+			summary.status === "failed" ||
+			summary.status === "completed";
+		if (!shouldPrune) continue;
+		try {
+			await removeRunWorktree(wt.path);
+		} catch {
+			/* best-effort */
+		}
+		pruned.push(wt.path);
+	}
+	return pruned;
 }
 
 /* ================================ Synthetic liveness loop (ADR 010 §3) ================================ */

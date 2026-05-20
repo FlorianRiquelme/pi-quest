@@ -208,6 +208,105 @@ describe('compileHandoff — seven rules', () => {
     expect(empty[0].work_item).toBe('WI-1');
   });
 
+  describe('rule vague_uat_scenario (M4-3)', () => {
+    const planFor = (): string =>
+      planWithWorkItems([
+        {
+          id: 'WI-1',
+          acceptance: 'works',
+          verification: 'v',
+          claims: ['src/x.ts'],
+          depends_on: [],
+          addresses: ['R1'],
+        },
+      ]);
+    const handoff = minimalResolvedHandoff(['[R1] works']);
+
+    const uatWithScenarios = (scenarios: Array<{ id: string; verify: string[] }>): string => {
+      const lines = ['---', 'uat_scenarios:'];
+      for (const sc of scenarios) {
+        lines.push(`  - id: ${sc.id}`);
+        lines.push('    name: "scenario"');
+        lines.push('    setup: []');
+        lines.push('    actions: []');
+        if (sc.verify.length === 0) {
+          lines.push('    verify: []');
+        } else {
+          lines.push('    verify:');
+          for (const v of sc.verify) lines.push(`      - "${v}"`);
+        }
+        lines.push('    verdict: pending');
+        lines.push('    notes: ""');
+      }
+      lines.push('---');
+      lines.push('');
+      lines.push('# UAT');
+      return lines.join('\n');
+    };
+
+    it('fires when a scenario verify list is empty', () => {
+      const uat = uatWithScenarios([{ id: 'S1', verify: [] }]);
+      const diagnostics = compileHandoff({
+        planMarkdown: planFor(),
+        resolvedHandoffMarkdown: handoff,
+        uatMarkdown: uat,
+      });
+      const vague = diagnostics.filter((d) => d.rule === 'vague_uat_scenario');
+      expect(vague).toHaveLength(1);
+      expect(vague[0].severity).toBe('warning');
+      expect(vague[0].message).toContain('S1');
+    });
+
+    it('fires when verify contains only vague phrases', () => {
+      const uat = uatWithScenarios([
+        { id: 'S1', verify: ['looks right'] },
+        { id: 'S2', verify: ['works as expected', 'feels good'] },
+        { id: 'S3', verify: ['Seems fine'] },
+      ]);
+      const diagnostics = compileHandoff({
+        planMarkdown: planFor(),
+        resolvedHandoffMarkdown: handoff,
+        uatMarkdown: uat,
+      });
+      const vague = diagnostics.filter((d) => d.rule === 'vague_uat_scenario');
+      expect(vague.map((d) => d.message).join('\n')).toContain('S1');
+      expect(vague.map((d) => d.message).join('\n')).toContain('S2');
+      expect(vague.map((d) => d.message).join('\n')).toContain('S3');
+      expect(vague).toHaveLength(3);
+      for (const d of vague) {
+        expect(d.severity).toBe('warning');
+      }
+    });
+
+    it('does not fire when verify has specific criteria', () => {
+      const uat = uatWithScenarios([
+        { id: 'S1', verify: ['Redirected to /dashboard with email shown in nav'] },
+      ]);
+      const diagnostics = compileHandoff({
+        planMarkdown: planFor(),
+        resolvedHandoffMarkdown: handoff,
+        uatMarkdown: uat,
+      });
+      const vague = diagnostics.filter((d) => d.rule === 'vague_uat_scenario');
+      expect(vague).toEqual([]);
+    });
+
+    it('does not fire when scenario mixes one vague + one specific entry', () => {
+      // Rule semantics: fires when EVERY entry is vague. One specific entry
+      // makes the scenario non-vague — the user has at least one real signal.
+      const uat = uatWithScenarios([
+        { id: 'S1', verify: ['looks right', 'Cart total updates from 0 to 1'] },
+      ]);
+      const diagnostics = compileHandoff({
+        planMarkdown: planFor(),
+        resolvedHandoffMarkdown: handoff,
+        uatMarkdown: uat,
+      });
+      const vague = diagnostics.filter((d) => d.rule === 'vague_uat_scenario');
+      expect(vague).toEqual([]);
+    });
+  });
+
   it('rule untraced_uat_scenario: UAT scenario traces_to unknown work-item', () => {
     const plan = planWithWorkItems([
       {

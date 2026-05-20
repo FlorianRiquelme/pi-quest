@@ -175,7 +175,7 @@ export const VALID_STATUS_TRANSITIONS: Partial<Record<QuestStatus, QuestStatus[]
 	blocked: ["executing", "needs-resolution", "reviewing", "resolved", "planned", "verification"],
 	verification: ["verification-ready", "blocked"],
 	"verification-ready": ["uat-ready"],
-	"uat-ready": ["completed", "uat-failed"],
+	"uat-ready": ["completed", "uat-failed", "planned"],
 	"uat-failed": ["executing", "needs-resolution", "planned", "verification", "uat-ready", "completed"],
 	completed: ["archived"],
 	archived: [],

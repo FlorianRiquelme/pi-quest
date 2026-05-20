@@ -16,6 +16,7 @@ import {
 	readJsonIfExists,
 	writeJson,
 } from "./fs-utils.js";
+import { validateEvent } from "./events.js";
 import { AGENTS_DIR } from "./paths.js";
 import type { AgentDef, BackgroundRunSummary } from "./types.js";
 
@@ -200,6 +201,44 @@ export function compactRunLine(summary: BackgroundRunSummary): string {
 	return `${summary.runId} ${summary.status}${code} • work-item ${summary.workItemId} • report ${summary.reportPath}`;
 }
 
+/**
+ * Append a `run_finished` event (per ADR 010) to a quest's audit log.
+ *
+ * Variant-required fields (`runId`, `workItemId`) live at the top level; the
+ * legacy free-form payload (`status`, `exitCode`, `model`, `rescueUsed`,
+ * `agentRole`) is captured in the open `details` slot so future readers can
+ * mine it without re-typing the union.
+ */
+export function recordRunFinished(options: {
+	questDir: string;
+	questId: string;
+	runId: string;
+	workItemId: string;
+	model: string;
+	status: BackgroundRunSummary["status"];
+	exitCode?: number;
+	rescueUsed?: boolean;
+	agentRole?: string;
+}): void {
+	const telemetryPath = path.join(options.questDir, "telemetry", "events.jsonl");
+	ensureDir(path.dirname(telemetryPath));
+	const event = validateEvent({
+		event: "run_finished",
+		timestamp: new Date().toISOString(),
+		questId: options.questId,
+		runId: options.runId,
+		workItemId: options.workItemId,
+		details: {
+			agentRole: options.agentRole ?? "implementation",
+			model: options.model,
+			status: options.status,
+			exitCode: options.exitCode,
+			rescueUsed: options.rescueUsed ?? false,
+		},
+	});
+	fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+}
+
 export async function startSubagentRun(options: {
 	cwd: string;
 	questId: string;
@@ -295,24 +334,17 @@ export async function startSubagentRun(options: {
 		summary.updatedAt = completedAt;
 		activeRuns.delete(runId);
 		writeRunSummary(summary);
-		const telemetryPath = path.join(options.questDir, "telemetry", "events.jsonl");
-		ensureDir(path.dirname(telemetryPath));
-		fs.appendFileSync(
-			telemetryPath,
-			JSON.stringify({
-				timestamp: completedAt,
-				questId: options.questId,
-				event: "agent_run_completed",
-				agentRole: "implementation",
-				workItemId: options.workItemId,
-				runId,
-				model: model ?? "default",
-				status,
-				exitCode,
-				rescueUsed: false,
-			}) + "\n",
-			"utf-8",
-		);
+		recordRunFinished({
+			questDir: options.questDir,
+			questId: options.questId,
+			runId,
+			workItemId: options.workItemId,
+			model: model ?? "default",
+			status,
+			exitCode,
+			rescueUsed: false,
+			agentRole: "implementation",
+		});
 		options.onStatus?.(summary);
 	};
 

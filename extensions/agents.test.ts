@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fs, vol } from 'memfs';
-import { parseAgentDef, normalizeModel, getAgentDef, compactRunLine } from './agents';
+import {
+	parseAgentDef,
+	normalizeModel,
+	getAgentDef,
+	compactRunLine,
+	recordRunFinished,
+} from './agents';
 import type { BackgroundRunSummary } from './types';
 
 vi.mock('node:fs', async () => {
@@ -87,6 +93,42 @@ describe('agents', () => {
     it('returns undefined when no match', () => {
       vol.mkdirSync('/agents', { recursive: true });
       expect(getAgentDef('missing')).toBeUndefined();
+    });
+  });
+
+  describe('recordRunFinished', () => {
+    it('writes a run_finished event (not agent_run_completed) to events.jsonl', () => {
+      vol.mkdirSync('/project/.pi/quests/q1', { recursive: true });
+
+      recordRunFinished({
+        questDir: '/project/.pi/quests/q1',
+        questId: 'q1',
+        runId: 'run-1',
+        workItemId: '001',
+        model: 'kimi-2.6',
+        status: 'completed',
+        exitCode: 0,
+        rescueUsed: false,
+      });
+
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const lines = jsonl.trim().split('\n');
+      expect(lines).toHaveLength(1);
+      const event = JSON.parse(lines[0]);
+      expect(event.event).toBe('run_finished');
+      expect(event.event).not.toBe('agent_run_completed');
+      expect(event.questId).toBe('q1');
+      expect(event.runId).toBe('run-1');
+      expect(event.workItemId).toBe('001');
+      expect(typeof event.timestamp).toBe('string');
+      // status/exitCode/etc live inside the open details slot.
+      expect(event.details.status).toBe('completed');
+      expect(event.details.exitCode).toBe(0);
+      expect(event.details.model).toBe('kimi-2.6');
+      expect(event.details.rescueUsed).toBe(false);
     });
   });
 

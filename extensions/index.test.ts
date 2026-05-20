@@ -297,7 +297,7 @@ describe('piQuestExtension', () => {
   });
 
   describe('quest_telemetry_event', () => {
-    it('appends event to events.jsonl', async () => {
+    it('appends a valid event to events.jsonl', async () => {
       vol.fromJSON({
         '/project/.pi/quests/q1/workflow.json': JSON.stringify({
           id: 'q1',
@@ -315,7 +315,13 @@ describe('piQuestExtension', () => {
 
       const result = await tool.execute(
         'tc-1',
-        { questId: 'q1', event: 'test_event', agentRole: 'implementation' },
+        {
+          questId: 'q1',
+          event: 'run_finished',
+          runId: 'run-1',
+          workItemId: '001',
+          details: { status: 'completed', exitCode: 0 },
+        },
         undefined,
         undefined,
         { cwd: '/project', ui: mockUi },
@@ -331,9 +337,44 @@ describe('piQuestExtension', () => {
       const lines = jsonl.trim().split('\n');
       expect(lines).toHaveLength(1);
       const event = JSON.parse(lines[0]);
-      expect(event.event).toBe('test_event');
-      expect(event.agentRole).toBe('implementation');
+      expect(event.event).toBe('run_finished');
+      expect(event.runId).toBe('run-1');
+      expect(event.workItemId).toBe('001');
       expect(event.questId).toBe('q1');
+      expect(typeof event.timestamp).toBe('string');
+    });
+
+    it('rejects an unknown event kind', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1',
+          title: 'Q',
+          status: 'intake',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+          source: {},
+          artifacts: { handoff: 'H.md' },
+        }),
+      });
+
+      piQuestExtension(mockPi as any);
+      const tool = registeredTools['quest_telemetry_event'];
+
+      const result = await tool.execute(
+        'tc-1',
+        { questId: 'q1', event: 'not_a_real_event' },
+        undefined,
+        undefined,
+        { cwd: '/project', ui: mockUi },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/not_a_real_event|unknown|invalid/i);
+
+      // Nothing should have been written to events.jsonl.
+      expect(
+        vol.existsSync('/project/.pi/quests/q1/telemetry/events.jsonl'),
+      ).toBe(false);
     });
 
     it('returns error when quest not found', async () => {
@@ -344,7 +385,7 @@ describe('piQuestExtension', () => {
 
       const result = await tool.execute(
         'tc-1',
-        { questId: 'missing', event: 'test' },
+        { questId: 'missing', event: 'stage_entered', to: 'reviewing' },
         undefined,
         undefined,
         { cwd: '/project', ui: mockUi },

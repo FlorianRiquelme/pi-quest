@@ -138,16 +138,32 @@ export function assembleWidgetLines(
 	const title = truncateToWidth(opts.theme.fg('text', snapshot.title), titleMaxW);
 	const line1 = prefix + title + sep + moodWord;
 
-	/* -------- Line 2: glyph + run summary + clocks -------- */
+	/* -------- Line 2: glyph + run summary + clocks --------
+	 *
+	 * Soft-freeze override (M3-2 / ADR 013 §8): when the quest is soft-frozen,
+	 * replace the standard run summary with `❄ frozen · N runs completing ·
+	 * Ctrl+P to release`. Clocks still render to keep the Two Clocks signal
+	 * available. Mood is Resting in this branch.
+	 */
 	const glyphPart = colorize(mood, `  ${glyph} `, opts);
 	const detailParts: string[] = [];
-	if (snapshot.runningCount > 0) {
-		detailParts.push(opts.theme.fg('warning', `${snapshot.runningCount} running`));
-	}
-	if (snapshot.totalCount > 0) {
+	if (snapshot.softFreeze) {
+		const inFlight = snapshot.runningCount;
+		const wordRuns = inFlight === 1 ? 'run' : 'runs';
+		detailParts.push(opts.theme.fg('accent', '❄ frozen'));
 		detailParts.push(
-			opts.theme.fg('dim', `${snapshot.completedCount}/${snapshot.totalCount} done`),
+			opts.theme.fg('dim', `${inFlight} ${wordRuns} completing`),
 		);
+		detailParts.push(opts.theme.fg('dim', 'Ctrl+P to release'));
+	} else {
+		if (snapshot.runningCount > 0) {
+			detailParts.push(opts.theme.fg('warning', `${snapshot.runningCount} running`));
+		}
+		if (snapshot.totalCount > 0) {
+			detailParts.push(
+				opts.theme.fg('dim', `${snapshot.completedCount}/${snapshot.totalCount} done`),
+			);
+		}
 	}
 
 	const detailJoined = detailParts.join(opts.theme.fg('dim', '  •  '));

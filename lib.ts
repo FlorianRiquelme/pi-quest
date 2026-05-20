@@ -35,6 +35,20 @@ export interface QuestArtifacts {
 	uat?: string;
 }
 
+/**
+ * Swarm-freeze state recorded by M3-2 / ADR 013 §8.
+ *
+ * Present only while a freeze is active. Soft freeze is reversible — the same
+ * chord (Ctrl+P) clears the field. Hard freeze writes the field as part of
+ * transitioning the quest to `blocked` (the freeze field itself is not
+ * required for the blocked state, but the audit trail captures the cause).
+ */
+export interface QuestFreeze {
+	mode: "soft" | "hard";
+	engaged_at: string;
+	triggered_by: "user";
+}
+
 export interface QuestWorkflow {
 	id: string;
 	title: string;
@@ -49,6 +63,16 @@ export interface QuestWorkflow {
 	 * subsequent `uat-ready` re-entries (e.g. uat-failed → uat-ready loops).
 	 */
 	uat_doorbell_fired_at?: string;
+	/**
+	 * Active swarm-freeze state, if any. See ADR 013 §8 and M3-2.
+	 * Cleared (deleted from the workflow) when freeze is released.
+	 */
+	freeze?: QuestFreeze;
+	/**
+	 * Reason a quest moved into `blocked`. Set to `user_aborted` by a
+	 * hard freeze (M3-2). Other rescue paths may set their own reasons.
+	 */
+	cancel_reason?: string;
 }
 
 export interface CurrentQuestState {

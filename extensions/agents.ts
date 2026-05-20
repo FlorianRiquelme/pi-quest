@@ -277,6 +277,19 @@ export async function startSubagentRun(options: {
 	systemPrompt?: string;
 	onStatus?: (summary: BackgroundRunSummary) => void;
 }): Promise<BackgroundRunSummary> {
+	// M3-2: soft-freeze guard. While a soft freeze is active on the quest,
+	// in-flight runs continue but no new runs may spawn. The chord handler
+	// (Ctrl+P) is the only way to clear the freeze. Reading the workflow is
+	// cheap; we avoid importing the freeze module to keep the dependency one-way.
+	const wf = readJsonIfExists<{ freeze?: { mode?: string } }>(
+		path.join(options.questDir, "workflow.json"),
+	);
+	if (wf?.freeze?.mode === "soft") {
+		throw new Error(
+			`Soft freeze is active for quest ${options.questId}; new runs are blocked. Press Ctrl+P to release.`,
+		);
+	}
+
 	const agentDef = getAgentDef(options.agentName);
 	const basePrompt = options.systemPrompt ?? agentDef?.systemPrompt ?? "";
 	const model = normalizeModel(options.model ?? agentDef?.model);

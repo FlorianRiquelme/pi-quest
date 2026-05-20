@@ -189,13 +189,31 @@ describe('piQuestExtension', () => {
     });
   });
 
-  it('registers one command and seven tools', () => {
+  it('registers one command, three shortcuts (dashboard + freeze chords), and seven tools', () => {
     piQuestExtension(mockPi as any);
-    expect(mockPi.registerShortcut).toHaveBeenCalledTimes(1);
+    // Dashboard + Ctrl+P (soft freeze) + Ctrl+Shift+P (hard freeze)
+    expect(mockPi.registerShortcut).toHaveBeenCalledTimes(3);
     expect(mockPi.registerShortcut).toHaveBeenCalledWith(
       'ctrl+shift+g',
       expect.objectContaining({ description: 'Open quest dashboard' }),
     );
+    expect(mockPi.registerShortcut).toHaveBeenCalledWith(
+      'ctrl+p',
+      expect.objectContaining({
+        description: expect.stringMatching(/soft freeze/i),
+      }),
+    );
+    expect(mockPi.registerShortcut).toHaveBeenCalledWith(
+      'ctrl+shift+p',
+      expect.objectContaining({
+        description: expect.stringMatching(/hard freeze/i),
+      }),
+    );
+
+    // No chord collision: each chord registered exactly once.
+    const chords = mockPi.registerShortcut.mock.calls.map((c: any[]) => c[0]);
+    expect(new Set(chords).size).toBe(chords.length);
+
     expect(mockPi.registerShortcut).not.toHaveBeenCalledWith(
       'alt+g',
       expect.anything(),

@@ -475,6 +475,27 @@ describe('commands', () => {
         expect(doorbellNotifications[0].level).toBe('info');
       });
 
+      it('suppresses generic "status →" notify when doorbell fires (pi collapses same-tick notifies)', async () => {
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseWorkflow()),
+        });
+        const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+        try {
+          const ctx = mockCtx('/project');
+          await cmdSetStatus(ctx, ['q1', 'uat-ready']);
+        } finally {
+          stdoutSpy.mockRestore();
+        }
+        const statusNotifications = notifyCalls.filter((c) =>
+          c.msg.includes('status →'),
+        );
+        expect(statusNotifications).toHaveLength(0);
+        const doorbellNotifications = notifyCalls.filter((c) =>
+          c.msg.startsWith('UAT pending for'),
+        );
+        expect(doorbellNotifications).toHaveLength(1);
+      });
+
       it('falls back to quest id when title is missing', async () => {
         vol.fromJSON({
           '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseWorkflow({ title: '' })),

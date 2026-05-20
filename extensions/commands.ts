@@ -264,13 +264,18 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 	// M4-2: UAT doorbell at the verification-ready → uat-ready boundary (ADR 016).
 	// Widget mood shift is handled by M3-1 (Hearth Widget Needs-you mood) — no
 	// wiring required here.
-	fireUatDoorbell(ctx, workflow, questDir, previousStatus);
+	const doorbellFired = fireUatDoorbell(ctx, workflow, questDir, previousStatus);
 	// M4-1 / ADR 015: auto-generate the Homecoming Brief at autonomous-to-
 	// interactive transitions so it's ready when the user next invokes /quest.
 	if (isAutonomousToInteractiveTransition(previousStatus, workflow.status)) {
 		await regenerateHomecomingBrief(ctx, id);
 	}
-	ctx.ui.notify(`Quest '${id}' status → ${newStatus}`, "info");
+	// pi's notify queue collapses back-to-back same-level messages within a tick,
+	// so the doorbell notify gets eaten by this generic status notify. When the
+	// doorbell owned the notification this turn, stay quiet.
+	if (!doorbellFired) {
+		ctx.ui.notify(`Quest '${id}' status → ${newStatus}`, "info");
+	}
 }
 
 /**
@@ -292,10 +297,10 @@ export function fireUatDoorbell(
 	workflow: QuestWorkflow,
 	questDir: string,
 	previousStatus: QuestStatus,
-) {
-	if (previousStatus !== "verification-ready") return;
-	if (workflow.status !== "uat-ready") return;
-	if (workflow.uat_doorbell_fired_at) return;
+): boolean {
+	if (previousStatus !== "verification-ready") return false;
+	if (workflow.status !== "uat-ready") return false;
+	if (workflow.uat_doorbell_fired_at) return false;
 
 	// Channel 1: terminal bell. Use \x07 (BEL). Silent on terminals with the
 	// bell disabled — that's an OS/terminal setting, nothing for us to do.
@@ -308,6 +313,7 @@ export function fireUatDoorbell(
 	// Persist the idempotency marker.
 	workflow.uat_doorbell_fired_at = new Date().toISOString();
 	saveQuestWorkflow(questDir, workflow);
+	return true;
 }
 
 /**

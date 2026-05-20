@@ -65,6 +65,130 @@ describe('piQuestExtension', () => {
     vi.clearAllMocks();
   });
 
+  describe('/quest auto-router (M2-1)', () => {
+    const mockCtx = (cwd: string) => ({
+      cwd,
+      ui: { ...mockUi, setWidget: vi.fn() },
+    });
+
+    it('routes from planned → launch-review and loads the skill instructions inline', async () => {
+      const workflow = {
+        id: 'lr-quest',
+        title: 'Launch quest',
+        status: 'planned',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'H.md', plan: 'IMPLEMENTATION_PLAN.md' },
+      };
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'lr-quest' }),
+        '/project/.pi/quests/lr-quest/workflow.json': JSON.stringify(workflow),
+      });
+
+      piQuestExtension(mockPi as any);
+      const handler = registeredCommands['quest'].handler;
+      await handler('', mockCtx('/project'));
+
+      const persisted = JSON.parse(
+        vol.readFileSync('/project/.pi/quests/lr-quest/workflow.json', 'utf-8') as string,
+      );
+      expect(persisted.status).toBe('launch-review');
+
+      // The router notifies the user that the Launch Review skill is loaded inline.
+      const launchReviewNotify = (mockUi.notify as any).mock.calls.find(
+        (c: any[]) => typeof c[0] === 'string' && c[0].includes('Launch Review'),
+      );
+      expect(launchReviewNotify).toBeDefined();
+    });
+
+    it('drives an end-to-end quest from planned → launch-review → executing via the ceremony', async () => {
+      const workflow = {
+        id: 'e2e-quest',
+        title: 'E2E Launch Review',
+        status: 'planned',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'H.md', plan: 'IMPLEMENTATION_PLAN.md' },
+      };
+      // Pre-populate the plan with the Trinity (minus sign-off).
+      const planText =
+        '---\n' +
+        'blast_radius:\n' +
+        '  in_scope:\n' +
+        '    - src/foo.ts\n' +
+        'pre_mortem:\n' +
+        '  most_likely_failure: regression in callers\n' +
+        'compiler_diagnostics: []\n' +
+        '---\n\n# Plan\n';
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'e2e-quest' }),
+        '/project/.pi/quests/e2e-quest/workflow.json': JSON.stringify(workflow),
+        '/project/.pi/quests/e2e-quest/IMPLEMENTATION_PLAN.md': planText,
+      });
+
+      piQuestExtension(mockPi as any);
+      const handler = registeredCommands['quest'].handler;
+      const ctx = mockCtx('/project');
+
+      // Step 1: /quest (auto-router) advances planned → launch-review.
+      await handler('', ctx);
+      let persisted = JSON.parse(
+        vol.readFileSync('/project/.pi/quests/e2e-quest/workflow.json', 'utf-8') as string,
+      );
+      expect(persisted.status).toBe('launch-review');
+
+      // Step 2: the skill records sign-off into the plan frontmatter.
+      const { recordLaunchReviewSignOff } = await import('./launch-review');
+      recordLaunchReviewSignOff('/project/.pi/quests/e2e-quest/IMPLEMENTATION_PLAN.md');
+
+      // Step 3: /quest set-status e2e-quest executing — gate passes.
+      await handler('set-status e2e-quest executing', ctx);
+      persisted = JSON.parse(
+        vol.readFileSync('/project/.pi/quests/e2e-quest/workflow.json', 'utf-8') as string,
+      );
+      expect(persisted.status).toBe('executing');
+
+      // launch_gate event with outcome: passed must be in events.jsonl.
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/e2e-quest/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+      const gateEvent = events.find((e) => e.event === 'launch_gate');
+      expect(gateEvent).toBeDefined();
+      expect(gateEvent.outcome).toBe('passed');
+      expect(gateEvent.reasons).toEqual([]);
+      expect(gateEvent.questId).toBe('e2e-quest');
+    });
+
+    it('does not auto-advance from intake', async () => {
+      const workflow = {
+        id: 'lr-quest',
+        title: 'Launch quest',
+        status: 'intake',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'H.md' },
+      };
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'lr-quest' }),
+        '/project/.pi/quests/lr-quest/workflow.json': JSON.stringify(workflow),
+      });
+
+      piQuestExtension(mockPi as any);
+      const handler = registeredCommands['quest'].handler;
+      await handler('', mockCtx('/project'));
+
+      const persisted = JSON.parse(
+        vol.readFileSync('/project/.pi/quests/lr-quest/workflow.json', 'utf-8') as string,
+      );
+      expect(persisted.status).toBe('intake');
+    });
+  });
+
   it('registers one command and five tools', () => {
     piQuestExtension(mockPi as any);
     expect(mockPi.registerShortcut).toHaveBeenCalledTimes(1);

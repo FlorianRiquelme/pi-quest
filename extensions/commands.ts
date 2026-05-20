@@ -16,10 +16,16 @@ import {
 } from "../lib.js";
 import { ensureDir } from "./fs-utils.js";
 import { getCurrentBranch, getCurrentCommit } from "./git.js";
+import {
+	evaluateLaunchGate,
+	readPlanFrontmatter,
+	type LaunchGateResult,
+} from "./launch-review.js";
 import { questDirPath } from "./paths.js";
 import { resolveReferences } from "./references.js";
 import { getAllQuestIds, loadCurrentState, loadQuestWorkflow, saveCurrentState, saveQuestWorkflow } from "./state.js";
 import type { CommandContext } from "./types.js";
+import { validateEvent } from "./events.js";
 
 export async function ensureGitignore(cwd: string) {
 	const gitignorePath = path.join(cwd, ".gitignore");
@@ -119,6 +125,11 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 			return;
 		}
 	}
+	// Launch Gate (ADR 012): launch-review → executing.
+	if (workflow.status === "launch-review" && newStatus === "executing") {
+		const gateResult = runLaunchGate(ctx, id, questDir, workflow, force);
+		if (gateResult.outcome === "blocked") return;
+	}
 	const previousStatus = workflow.status;
 	workflow.status = newStatus as QuestStatus;
 	workflow.updatedAt = new Date().toISOString();
@@ -165,6 +176,81 @@ export function fireUatDoorbell(
 	// Persist the idempotency marker.
 	workflow.uat_doorbell_fired_at = new Date().toISOString();
 	saveQuestWorkflow(questDir, workflow);
+}
+
+/**
+ * Auto-router branch (ADR 008 + ADR 012): advance from `planned` to
+ * `launch-review` and load the Launch Review skill inline.
+ *
+ * Returns true if it advanced a stage (so the outer router can decide whether
+ * to keep going or stop for interactive input). For M2-1 we only handle the
+ * `planned → launch-review` transition; other stages remain on `showStatus`.
+ */
+export async function tryAutoRoute(ctx: CommandContext): Promise<boolean> {
+	const state = loadCurrentState(ctx.cwd);
+	if (!state.currentQuestId) return false;
+	const questDir = questDirPath(ctx.cwd, state.currentQuestId);
+	const workflow = loadQuestWorkflow(questDir);
+	if (!workflow) return false;
+
+	if (workflow.status === "planned") {
+		workflow.status = "launch-review";
+		workflow.updatedAt = new Date().toISOString();
+		saveQuestWorkflow(questDir, workflow);
+		ctx.ui.notify(
+			`Quest '${workflow.id}' entering Launch Review.\n` +
+				`The Launch Review skill is loaded inline. Walk through Compiler diagnostics, Blast Radius, and Pre-Mortem, then sign off via the skill's helper. Use \`/quest set-status ${workflow.id} executing\` (or \`--force\`) when ready.`,
+			"info",
+		);
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * Launch Gate (ADR 012). Runs at the `launch-review → executing` transition.
+ *
+ * On `--force`: skips checks, emits `outcome: "force_passed"` with reason
+ * `user_forced`. Otherwise reads the plan frontmatter, calls
+ * `evaluateLaunchGate`, emits `launch_gate` with the outcome and reasons, and
+ * notifies the user when blocked. Either way the `launch_gate` event lands in
+ * `telemetry/events.jsonl` so the audit trail records every Gate run.
+ */
+export function runLaunchGate(
+	ctx: { ui: { notify: (msg: string, level?: "error" | "info" | "warning") => void } },
+	questId: string,
+	questDir: string,
+	workflow: QuestWorkflow,
+	force: boolean,
+): LaunchGateResult {
+	let result: LaunchGateResult;
+	if (force) {
+		result = { outcome: "force_passed", reasons: ["user_forced"] };
+	} else {
+		const planPath = path.join(questDir, workflow.artifacts.plan ?? "IMPLEMENTATION_PLAN.md");
+		const fm = readPlanFrontmatter(planPath);
+		result = evaluateLaunchGate(fm);
+	}
+
+	const telemetryPath = path.join(questDir, "telemetry", "events.jsonl");
+	ensureDir(path.dirname(telemetryPath));
+	const event = validateEvent({
+		event: "launch_gate",
+		timestamp: new Date().toISOString(),
+		questId,
+		outcome: result.outcome,
+		reasons: result.reasons,
+	});
+	fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+
+	if (result.outcome === "blocked") {
+		ctx.ui.notify(
+			`Launch Gate blocked: ${result.reasons.join(", ")}. Run the Launch Review skill or use --force to override.`,
+			"error",
+		);
+	}
+	return result;
 }
 
 export async function cmdIntake(ctx: CommandContext, args: string[]) {

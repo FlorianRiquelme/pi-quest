@@ -13,6 +13,7 @@ import {
   countCompletedWorkItems,
   getTotalWorkItems,
   readArtifactFile,
+  readQuestEvents,
 } from './data.js';
 
 describe('UI data layer', () => {
@@ -130,6 +131,36 @@ describe('UI data layer', () => {
   it('readArtifactFile returns undefined for missing files', () => {
     const content = readArtifactFile(`${cwd}/.pi/quests/active-quest/MISSING.md`);
     expect(content).toBeUndefined();
+  });
+
+  it('readQuestEvents returns [] when telemetry/events.jsonl missing', () => {
+    expect(readQuestEvents(cwd, 'other-quest')).toEqual([]);
+  });
+
+  it('readQuestEvents parses each JSONL line, skips blanks and corrupt lines', () => {
+    const lines = [
+      JSON.stringify({
+        event: 'stage_entered',
+        timestamp: '2026-05-19T17:00:00.000Z',
+        questId: 'active-quest',
+        to: 'executing',
+      }),
+      '',
+      'not json {',
+      JSON.stringify({
+        event: 'progress_beat',
+        timestamp: '2026-05-19T17:05:00.000Z',
+        questId: 'active-quest',
+        runId: 'r1',
+        phase: 'alive',
+      }),
+    ].join('\n');
+    vol.mkdirSync(`${cwd}/.pi/quests/active-quest/telemetry`, { recursive: true });
+    vol.writeFileSync(`${cwd}/.pi/quests/active-quest/telemetry/events.jsonl`, lines);
+    const events = readQuestEvents(cwd, 'active-quest');
+    expect(events).toHaveLength(2);
+    expect(events[0].event).toBe('stage_entered');
+    expect(events[1].event).toBe('progress_beat');
   });
 
   it('handles corrupted workflow.json gracefully', () => {

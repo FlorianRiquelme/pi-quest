@@ -10,7 +10,6 @@ import {
 	DEFAULT_QUEST_CONFIG,
 	deriveQuestId,
 	generateTimestampId,
-	isValidTransition,
 	QuestStatus,
 	type QuestWorkflow,
 } from "../lib.js";
@@ -29,10 +28,10 @@ import type { CommandContext } from "./types.js";
 import { emitStageEntered, validateEvent } from "./events.js";
 import {
 	generateHomecomingBrief,
-	isAutonomousToInteractiveTransition,
 	type NarrativeSpawnInput,
 } from "./homecoming-brief.js";
 import { runSubagent } from "./agents.js";
+import { transitionStage } from "./stage-transition.js";
 
 /* ================================ Homecoming Brief (M4-1 / ADR 015) ================================ */
 
@@ -217,63 +216,17 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 		ctx.ui.notify("Usage: /quest set-status <id> <status> [--force]", "warning");
 		return;
 	}
-	const questDir = questDirPath(ctx.cwd, id);
-	const workflow = loadQuestWorkflow(questDir);
-	if (!workflow) {
-		ctx.ui.notify(`Quest '${id}' not found.`, "error");
-		return;
-	}
 	const force = args.includes("--force");
-	if (!force && !isValidTransition(workflow.status, newStatus as QuestStatus)) {
-		ctx.ui.notify(
-			`Invalid status transition: ${workflow.status} → ${newStatus}. Use --force to override.`,
-			"error",
-		);
+	const result = await transitionStage(ctx, id, newStatus as QuestStatus, { force });
+	if (result.outcome === "rejected") {
+		const suffix = result.reason === "quest_not_found" ? "" : " Use --force to override.";
+		ctx.ui.notify(result.message + suffix, "error");
 		return;
-	}
-	if (!force && newStatus === "verification-ready") {
-		const verificationPath = path.join(questDir, workflow.artifacts.verification ?? "VERIFICATION.md");
-		if (!fs.existsSync(verificationPath)) {
-			ctx.ui.notify(
-				`Gate check failed: ${workflow.artifacts.verification ?? "VERIFICATION.md"} not found. Run the Verification Agent before marking verification-ready, or use --force to override.`,
-				"error",
-			);
-			return;
-		}
-	}
-	// Launch Gate (ADR 012): launch-review → executing.
-	if (workflow.status === "launch-review" && newStatus === "executing") {
-		const gateResult = runLaunchGate(ctx, id, questDir, workflow, force);
-		if (gateResult.outcome === "blocked") return;
-	}
-	// Quest Branch capture (ADR 011 §2): first entry to executing only.
-	try {
-		await captureQuestBranchOnExecuting(ctx.cwd, workflow, newStatus as QuestStatus);
-	} catch (err) {
-		ctx.ui.notify(
-			`Quest Branch capture failed: ${err instanceof Error ? err.message : String(err)}`,
-			"error",
-		);
-		return;
-	}
-	const previousStatus = workflow.status;
-	workflow.status = newStatus as QuestStatus;
-	workflow.updatedAt = new Date().toISOString();
-	saveQuestWorkflow(questDir, workflow);
-	emitStageEntered(questDir, id, previousStatus, workflow.status);
-	// M4-2: UAT doorbell at the verification-ready → uat-ready boundary (ADR 016).
-	// Widget mood shift is handled by M3-1 (Hearth Widget Needs-you mood) — no
-	// wiring required here.
-	const doorbellFired = fireUatDoorbell(ctx, workflow, questDir, previousStatus);
-	// M4-1 / ADR 015: auto-generate the Homecoming Brief at autonomous-to-
-	// interactive transitions so it's ready when the user next invokes /quest.
-	if (isAutonomousToInteractiveTransition(previousStatus, workflow.status)) {
-		await regenerateHomecomingBrief(ctx, id);
 	}
 	// pi's notify queue collapses back-to-back same-level messages within a tick,
-	// so the doorbell notify gets eaten by this generic status notify. When the
+	// so the doorbell notify gets eaten by a generic status notify. When the
 	// doorbell owned the notification this turn, stay quiet.
-	if (!doorbellFired) {
+	if (!result.doorbellFired) {
 		ctx.ui.notify(`Quest '${id}' status → ${newStatus}`, "info");
 	}
 }

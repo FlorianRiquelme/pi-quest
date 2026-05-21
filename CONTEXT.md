@@ -24,6 +24,10 @@ _Avoid_: State, phase
 The ordered sequence of workflow statuses a quest traverses, from intake through completion.
 _Avoid_: Funnel, pipeline (unqualified)
 
+**Stage Transition**:
+A controlled advance of a **Quest** from one **Workflow Status** to the next along the **Stage Pipeline**. Owns the structural checks (validity of the transition, the verification-artifact gate, the **Launch Gate**), the **Quest Branch** capture on first entry to `executing`, the workflow write, the `stage_entered` audit event, and downstream side effects (UAT doorbell, **Homecoming Brief** regeneration on autonomous-to-interactive boundaries). Triggered from the `/quest set-status` command and the `quest_write_workflow` tool. Emergency stops (hard freeze) write a terminal status directly and do not go through a Stage Transition.
+_Avoid_: Status change, status update, FSM transition, set-status
+
 **Artifact**:
 A file produced during a quest lifecycle that captures domain knowledge or decisions (e.g., HANDOFF, RECON, PLAN, VERIFICATION, UAT).
 _Avoid_: Document, output, deliverable
@@ -103,7 +107,7 @@ _Avoid_: Walkthrough (unqualified), interview, checklist
 ## Relationships
 
 - A **Quest** is created from one **Handoff**
-- A **Quest** has one **Workflow Status** at any time, progressing through the **Stage Pipeline**
+- A **Quest** has one **Workflow Status** at any time, progressing through the **Stage Pipeline** via **Stage Transitions**
 - A **Quest** produces multiple **Artifacts** across its lifecycle
 - An **Implementation Plan** breaks a **Quest** into multiple **Work Items**
 - Each **Work Item** may have zero or more **Runs**

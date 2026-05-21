@@ -7,13 +7,11 @@ import * as path from "node:path";
 import { Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { isValidTransition, QuestStatus } from "../lib.js";
-import { captureQuestBranchOnExecuting, fireUatDoorbell, regenerateHomecomingBrief, runLaunchGate } from "./commands.js";
-import { isAutonomousToInteractiveTransition } from "./homecoming-brief.js";
+import { QuestStatus } from "../lib.js";
 import { MAX_SUBAGENT_CAPTURE_CHARS } from "./fs-utils.js";
 import { ensureDir } from "./fs-utils.js";
 import { questDirPath } from "./paths.js";
-import { loadQuestWorkflow, saveQuestWorkflow } from "./state.js";
+import { loadQuestWorkflow } from "./state.js";
 import {
 	__lastBeatAtForTests,
 	activeRuns,
@@ -24,7 +22,8 @@ import {
 	runSubagent,
 	startSubagentRun,
 } from "./agents.js";
-import { emitStageEntered, validateEvent } from "./events.js";
+import { validateEvent } from "./events.js";
+import { transitionStage } from "./stage-transition.js";
 import type { BackgroundRunSummary, ToolContext } from "./types.js";
 
 /* ================================ Theme helpers ================================ */
@@ -364,85 +363,23 @@ export async function executeQuestWriteWorkflow(
 	}
 
 	if (params.action === "set-status" && params.status) {
-		if (!params.force && !isValidTransition(workflow.status, params.status as QuestStatus)) {
+		const result = await transitionStage(
+			ctx,
+			params.questId,
+			params.status as QuestStatus,
+			{ force: !!params.force },
+		);
+		if (result.outcome === "rejected") {
+			const suffix = result.reason === "quest_not_found" ? "" : " Use force=true to override.";
+			const text =
+				result.reason === "invalid_transition"
+					? `Invalid transition: ${workflow.status} → ${params.status}.${suffix}`
+					: result.message + suffix;
 			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `Invalid transition: ${workflow.status} → ${params.status}. Use force=true to override.`,
-					},
-				],
+				content: [{ type: "text" as const, text }],
 				isError: true,
-				details: { currentStatus: workflow.status, requestedStatus: params.status },
+				details: { reason: result.reason, ...(result.details ?? {}) },
 			};
-		}
-
-		// Harness-level gate: verification-ready requires VERIFICATION.md to exist
-		if (params.status === "verification-ready") {
-			const verificationPath = path.join(questDir, workflow.artifacts.verification ?? "VERIFICATION.md");
-			if (!params.force && !fs.existsSync(verificationPath)) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `Gate check failed: ${workflow.artifacts.verification ?? "VERIFICATION.md"} not found. Run the Verification Agent before marking verification-ready, or use force=true to override.`,
-						},
-					],
-					isError: true,
-					details: { currentStatus: workflow.status, requestedStatus: params.status, missingArtifact: verificationPath },
-				};
-			}
-		}
-
-		// Launch Gate (ADR 012): launch-review → executing
-		if (workflow.status === "launch-review" && params.status === "executing") {
-			const gateResult = runLaunchGate(ctx, params.questId, questDir, workflow, !!params.force);
-			if (gateResult.outcome === "blocked") {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `Launch Gate blocked: ${gateResult.reasons.join(", ")}. Run the Launch Review skill or use force=true to override.`,
-						},
-					],
-					isError: true,
-					details: {
-						currentStatus: workflow.status,
-						requestedStatus: params.status,
-						reasons: gateResult.reasons,
-					},
-				};
-			}
-		}
-
-		// Quest Branch capture (ADR 011 §2): first entry to executing only.
-		try {
-			await captureQuestBranchOnExecuting(ctx.cwd, workflow, params.status as QuestStatus);
-		} catch (err) {
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `Quest Branch capture failed: ${err instanceof Error ? err.message : String(err)}`,
-					},
-				],
-				isError: true,
-				details: { currentStatus: workflow.status, requestedStatus: params.status },
-			};
-		}
-
-		const previousStatus = workflow.status;
-		workflow.status = params.status as QuestStatus;
-		workflow.updatedAt = new Date().toISOString();
-		saveQuestWorkflow(questDir, workflow);
-		emitStageEntered(questDir, params.questId, previousStatus, workflow.status);
-		// M4-2: UAT doorbell at the verification-ready → uat-ready boundary
-		// (ADR 016). Widget mood shift is M3-1's responsibility — not here.
-		fireUatDoorbell(ctx, workflow, questDir, previousStatus);
-		// M4-1 / ADR 015: pre-compose the Homecoming Brief at autonomous-to-
-		// interactive transitions so it's ready when the user next invokes /quest.
-		if (isAutonomousToInteractiveTransition(previousStatus, workflow.status)) {
-			await regenerateHomecomingBrief(ctx, params.questId);
 		}
 		return {
 			content: [
@@ -451,7 +388,7 @@ export async function executeQuestWriteWorkflow(
 					text: `Status updated to '${params.status}' for quest '${params.questId}'.`,
 				},
 			],
-			details: { workflow },
+			details: { workflow: result.workflow },
 		};
 	}
 

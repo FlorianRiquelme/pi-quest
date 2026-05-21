@@ -294,4 +294,17 @@ describe('uat SKILL.md (M4-3)', () => {
     const content = await readSkill();
     expect(content).toMatch(/Reverse Prompting|ADR\s*016/i);
   });
+
+  it('resume hint for skipped scenarios points at the real /skill:quest-uat invocation (issue #5)', async () => {
+    const content = await readSkill();
+    // No reference to the non-existent /quest uat subcommand.
+    expect(content).not.toMatch(/\/quest\s+uat\b/);
+    // The skipped-scenarios resolution row must tell the user how to come back.
+    // Match the table cell that handles the "only skips remain" tally.
+    const row = content
+      .split('\n')
+      .find((line) => line.includes('only skips'));
+    expect(row, 'expected a tally row mentioning "only skips"').toBeTruthy();
+    expect(row!).toMatch(/\/skill:quest-uat/);
+  });
 });

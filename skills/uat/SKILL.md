@@ -117,7 +117,7 @@ Then resolve as follows:
 |---|---|
 | All `pass` (any number of `n/a`)  | Prompt: "Mark the quest `completed`? Run `/quest set-status <id> completed`." |
 | Any `fail`                        | Enter the **Failure loop** below. |
-| Some `pending` (only skips)       | Leave the quest at `uat-ready`. Tell the user the skipped scenarios will resurface next time. |
+| Some `pending` (only skips)       | Leave the quest at `uat-ready`. Tell the user the skipped scenarios will resurface the next time they run `/skill:quest-uat` on this quest. |
 
 ## Failure loop (ADR 016 §5)
 

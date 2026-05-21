@@ -242,8 +242,25 @@ function notifyTransitionOutcome(
 	// so the doorbell notify gets eaten by a generic status notify. When the
 	// doorbell owned the notification this turn, stay quiet.
 	if (!result.doorbellFired) {
-		ctx.ui.notify(`Quest '${questId}' status → ${newStatus}`, "info");
+		ctx.ui.notify(formatTransitionNotify(questId, newStatus, result.workflow), "info");
 	}
+}
+
+/**
+ * Compose the success notify for a stage transition. When the transition
+ * captured a Quest Branch and Base SHA (ADRs 011 + 012), append both as
+ * audit anchors — short Base SHA (first 8 chars) so it stays scannable.
+ * Otherwise the message stays terse: no fake data, no empty fields.
+ */
+function formatTransitionNotify(
+	id: string,
+	newStatus: QuestStatus,
+	workflow: QuestWorkflow,
+): string {
+	const base = `Quest '${id}' status → ${newStatus}`;
+	const { questBranch, baseSha } = workflow;
+	if (!questBranch || !baseSha) return base;
+	return `${base}\nQuest Branch: ${questBranch} · Base SHA: ${baseSha.slice(0, 8)}`;
 }
 
 /**

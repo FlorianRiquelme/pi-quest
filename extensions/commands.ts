@@ -19,6 +19,7 @@ import { ensureQuestBranch, getHeadSha } from "./worktree.js";
 import {
 	evaluateLaunchGate,
 	readPlanFrontmatter,
+	recordLaunchReviewSignOff,
 	type LaunchGateResult,
 } from "./launch-review.js";
 import { questDirPath } from "./paths.js";
@@ -31,7 +32,7 @@ import {
 	type NarrativeSpawnInput,
 } from "./homecoming-brief.js";
 import { runSubagent } from "./agents.js";
-import { transitionStage } from "./stage-transition.js";
+import { transitionStage, type StageTransitionResult } from "./stage-transition.js";
 
 /* ================================ Homecoming Brief (M4-1 / ADR 015) ================================ */
 
@@ -218,6 +219,20 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 	}
 	const force = args.includes("--force");
 	const result = await transitionStage(ctx, id, newStatus as QuestStatus, { force });
+	notifyTransitionOutcome(ctx, id, newStatus as QuestStatus, result);
+}
+
+/**
+ * Surface a `transitionStage` result via `ctx.ui.notify`. Single outcome notify
+ * per call: an "error" with the rejection reasons, or an "info" confirming the
+ * new status (suppressed when the UAT doorbell already notified this tick).
+ */
+function notifyTransitionOutcome(
+	ctx: CommandContext,
+	questId: string,
+	newStatus: QuestStatus,
+	result: StageTransitionResult,
+): void {
 	if (result.outcome === "rejected") {
 		const suffix = result.reason === "quest_not_found" ? "" : " Use --force to override.";
 		ctx.ui.notify(result.message + suffix, "error");
@@ -227,8 +242,33 @@ export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
 	// so the doorbell notify gets eaten by a generic status notify. When the
 	// doorbell owned the notification this turn, stay quiet.
 	if (!result.doorbellFired) {
-		ctx.ui.notify(`Quest '${id}' status → ${newStatus}`, "info");
+		ctx.ui.notify(`Quest '${questId}' status → ${newStatus}`, "info");
 	}
+}
+
+/**
+ * Launch Review Accept (issue #3). Combines sign-off and the
+ * `launch-review → executing` transition into one atomic skill action.
+ *
+ * Writes `launch_review.signed_off_at` to the plan frontmatter and then runs
+ * the same `transitionStage` path the user would invoke via
+ * `/quest set-status <id> executing`. The Launch Gate evaluates in
+ * `transitionStage`, so a missing/incorrect Trinity surfaces inline (quest
+ * stays at `launch-review`, reasons in the error notify). On gate-pass the
+ * user sees a single info notify confirming the transition.
+ *
+ * The `--force` bypass (`/quest set-status <id> executing --force`) stays
+ * unchanged — it does not call this function.
+ */
+export async function acceptLaunchReview(
+	ctx: CommandContext,
+	questId: string,
+	planPath: string,
+): Promise<StageTransitionResult> {
+	recordLaunchReviewSignOff(planPath);
+	const result = await transitionStage(ctx, questId, "executing", {});
+	notifyTransitionOutcome(ctx, questId, "executing", result);
+	return result;
 }
 
 /**
@@ -298,7 +338,7 @@ export async function tryAutoRoute(ctx: CommandContext): Promise<boolean> {
 		emitStageEntered(questDir, questId, previousStatus, workflow.status);
 		ctx.ui.notify(
 			`Quest '${workflow.id}' entering Launch Review.\n` +
-				`The Launch Review skill is loaded inline. Walk through Compiler diagnostics, Blast Radius, and Pre-Mortem, then sign off via the skill's helper. Use \`/quest set-status ${workflow.id} executing\` (or \`--force\`) when ready.`,
+				`The Launch Review skill is loaded inline. Walk through Compiler diagnostics, Blast Radius, and Pre-Mortem, then Accept — the skill auto-transitions to executing once the Launch Gate passes. \`/quest set-status ${workflow.id} executing --force\` remains as an escape hatch.`,
 			"info",
 		);
 		return true;

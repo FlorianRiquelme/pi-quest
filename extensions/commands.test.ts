@@ -8,6 +8,7 @@ import {
   cmdConfig,
   cmdBrief,
   tryAutoRoute,
+  acceptLaunchReview,
   __setNarrativeSpawnerForTests,
 } from './commands';
 import type { CommandContext } from './types';
@@ -919,6 +920,178 @@ describe('commands', () => {
       });
       await expect(cmdResume(ctx, ['r-paused'])).resolves.toBeUndefined();
       expect(notifyCalls.find((c) => c.level === 'error')).toBeDefined();
+    });
+  });
+
+  describe('acceptLaunchReview (issue #3)', () => {
+    const baseLaunchReviewWorkflow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'q1',
+      title: 'Launch quest',
+      status: 'launch-review',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+      source: {},
+      artifacts: { handoff: 'H.md', plan: 'IMPLEMENTATION_PLAN.md' },
+      ...overrides,
+    });
+
+    const trinityPlanWithoutSignOff =
+      '---\n' +
+      'blast_radius:\n' +
+      '  in_scope:\n' +
+      '    - src/foo.ts\n' +
+      'pre_mortem:\n' +
+      '  most_likely_failure: oops\n' +
+      'compiler_diagnostics: []\n' +
+      '---\n\n# Plan\n';
+
+    it('Accept on gate-pass writes sign-off, transitions to executing, surfaces a single outcome notify', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+        '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': trinityPlanWithoutSignOff,
+      });
+      const ctx = mockCtx('/project');
+
+      const result = await acceptLaunchReview(
+        ctx,
+        'q1',
+        '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md',
+      );
+
+      expect(result.outcome).toBe('applied');
+
+      // Sign-off was written.
+      const { readPlanFrontmatter } = await import('./launch-review');
+      const fm = readPlanFrontmatter('/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md');
+      const lr = fm.launch_review as Record<string, unknown>;
+      expect(typeof lr.signed_off_at).toBe('string');
+      expect(lr.signed_off_by).toBe('user');
+
+      // Quest now sits at executing.
+      const persisted = JSON.parse(
+        vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+      );
+      expect(persisted.status).toBe('executing');
+
+      // One outcome notify confirming the transition.
+      const statusNotifies = notifyCalls.filter((c) => c.msg.includes('status → executing'));
+      expect(statusNotifies).toHaveLength(1);
+      expect(statusNotifies[0].level).toBe('info');
+
+      // Launch Gate event landed with outcome: passed.
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+      const gate = events.find((e) => e.event === 'launch_gate');
+      expect(gate.outcome).toBe('passed');
+    });
+
+    it('Accept on gate-block keeps quest at launch-review and surfaces reasons inline', async () => {
+      // Plan is missing blast_radius — Launch Gate will block.
+      const planMissingBlastRadius =
+        '---\n' +
+        'pre_mortem:\n' +
+        '  most_likely_failure: oops\n' +
+        'compiler_diagnostics: []\n' +
+        '---\n\n# Plan\n';
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+        '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': planMissingBlastRadius,
+      });
+      const ctx = mockCtx('/project');
+
+      const result = await acceptLaunchReview(
+        ctx,
+        'q1',
+        '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md',
+      );
+
+      // Result reflects the gate-block.
+      expect(result.outcome).toBe('rejected');
+      if (result.outcome !== 'rejected') return;
+      expect(result.reason).toBe('launch_gate_blocked');
+
+      // Quest still at launch-review.
+      const persisted = JSON.parse(
+        vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+      );
+      expect(persisted.status).toBe('launch-review');
+
+      // One error notify surfacing the missing reason inline.
+      const errorNotifies = notifyCalls.filter((c) => c.level === 'error');
+      expect(errorNotifies).toHaveLength(1);
+      expect(errorNotifies[0].msg).toContain('Launch Gate');
+      expect(errorNotifies[0].msg).toContain('missing_blast_radius');
+
+      // Sign-off was still written (per issue: step 1 happens regardless).
+      const { readPlanFrontmatter } = await import('./launch-review');
+      const fm = readPlanFrontmatter('/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md');
+      const lr = fm.launch_review as Record<string, unknown>;
+      expect(typeof lr.signed_off_at).toBe('string');
+
+      // launch_gate event recorded as blocked with the reason.
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+      const gate = events.find((e) => e.event === 'launch_gate');
+      expect(gate.outcome).toBe('blocked');
+      expect(gate.reasons).toContain('missing_blast_radius');
+    });
+
+    it('tryAutoRoute notify no longer instructs the user to manually type /quest set-status executing (issue #3)', async () => {
+      // The skill's Accept handler now triggers the transition. The auto-router
+      // should point the user at the skill, not at the manual command.
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1', title: 'Q', status: 'planned',
+          createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+          source: {}, artifacts: { handoff: 'H.md', plan: 'IMPLEMENTATION_PLAN.md' },
+        }),
+      });
+      const ctx = mockCtx('/project');
+      await tryAutoRoute(ctx);
+      const lrNotify = notifyCalls.find((c) => c.msg.includes('Launch Review'));
+      expect(lrNotify).toBeDefined();
+      // The notify must not bundle the manual "set-status ... executing"
+      // instruction with a "when ready" prompt — the skill now handles that
+      // transition on Accept. The --force escape hatch can still be referenced
+      // in a separate sentence/clause, but it is not the primary path.
+      expect(lrNotify!.msg).not.toContain('executing` (or `--force`) when ready');
+    });
+
+    it('--force regression: /quest set-status <id> executing --force still bypasses the skill', async () => {
+      // No plan file at all — gate would normally block. Confirm the --force path
+      // through cmdSetStatus is untouched by issue #3 (Accept lives in the skill;
+      // --force lives in the slash command).
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+      });
+      const ctx = mockCtx('/project');
+      await cmdSetStatus(ctx, ['q1', 'executing', '--force']);
+
+      const persisted = JSON.parse(
+        vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+      );
+      expect(persisted.status).toBe('executing');
+
+      const jsonl = vol.readFileSync(
+        '/project/.pi/quests/q1/telemetry/events.jsonl',
+        'utf-8',
+      ) as string;
+      const events = jsonl.trim().split('\n').map((l) => JSON.parse(l));
+      const gate = events.find((e) => e.event === 'launch_gate');
+      expect(gate.outcome).toBe('force_passed');
+      expect(gate.reasons).toContain('user_forced');
+
+      // The force path must NOT write a sign-off — its audit trail is the
+      // force_passed event, not a `signed_off_at` in plan frontmatter.
+      // (Plan file doesn't exist; verify no implicit creation.)
+      expect(fs.existsSync('/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md')).toBe(false);
     });
   });
 });

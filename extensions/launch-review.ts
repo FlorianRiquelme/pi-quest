@@ -17,6 +17,37 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { loadCurrentState, loadQuestWorkflow } from "./state.js";
+import { questDirPath } from "./paths.js";
+
+/* ================================ Active quest discovery ================================ */
+
+/**
+ * Resolve the IMPLEMENTATION_PLAN.md path for the currently active quest.
+ *
+ * Reads `state.json` (under the project's `.pi/`) and uses `currentQuestId` to
+ * locate the quest workspace. If the workflow declares a custom `artifacts.plan`
+ * filename it is honoured; otherwise the default `IMPLEMENTATION_PLAN.md` is
+ * used.
+ *
+ * Throws an `Error` whose message starts with `No active quest` when no quest
+ * is active (state file missing, empty, or `currentQuestId` null/undefined).
+ * The Launch Review skill catches this and exits with a clear message — it
+ * must never prompt the user for a quest ID (issue #2 / ADR 015).
+ */
+export function resolveActiveQuestPlanPath(cwd: string): string {
+	const state = loadCurrentState(cwd);
+	const questId = state.currentQuestId;
+	if (!questId) {
+		throw new Error(
+			"No active quest. Run `/quest select <id>` or `/quest intake <handoff.md>` first.",
+		);
+	}
+	const questDir = questDirPath(cwd, questId);
+	const workflow = loadQuestWorkflow(questDir);
+	const planFilename = workflow?.artifacts?.plan ?? "IMPLEMENTATION_PLAN.md";
+	return path.join(questDir, planFilename);
+}
 
 /* ================================ Frontmatter ================================ */
 

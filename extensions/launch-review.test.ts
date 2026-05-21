@@ -10,6 +10,7 @@ import {
   evaluateLaunchGate,
   recordPreMortemEdit,
   recordAcknowledgedWarning,
+  resolveActiveQuestPlanPath,
   type PlanFrontmatter,
 } from './launch-review';
 
@@ -365,6 +366,77 @@ describe('recordPreMortemEdit', () => {
     expect(edits).toHaveLength(2);
     expect(edits[0].field).toBe('detection_signal');
     expect(edits[1].field).toBe('recovery_plan');
+  });
+});
+
+describe('resolveActiveQuestPlanPath (issue #2 — auto-discover active quest)', () => {
+  beforeEach(() => {
+    vol.reset();
+  });
+
+  it('returns the plan path for the active quest from state.json', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q-active' }),
+      '/project/.pi/quests/q-active/IMPLEMENTATION_PLAN.md': '# Plan\n',
+    });
+    const planPath = resolveActiveQuestPlanPath('/project');
+    expect(planPath).toBe('/project/.pi/quests/q-active/IMPLEMENTATION_PLAN.md');
+  });
+
+  it('uses the workflow.artifacts.plan filename when available', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+        id: 'q1',
+        title: 't',
+        status: 'launch-review',
+        createdAt: '',
+        updatedAt: '',
+        source: {},
+        artifacts: { handoff: 'H.md', plan: 'CUSTOM_PLAN.md' },
+      }),
+      '/project/.pi/quests/q1/CUSTOM_PLAN.md': '# Plan\n',
+    });
+    expect(resolveActiveQuestPlanPath('/project')).toBe(
+      '/project/.pi/quests/q1/CUSTOM_PLAN.md',
+    );
+  });
+
+  it('throws a "no active quest" error when state.json is missing', () => {
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(/no active quest/i);
+  });
+
+  it('throws a "no active quest" error when currentQuestId is null', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: null }),
+    });
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(/no active quest/i);
+  });
+
+  it('throws a "no active quest" error when currentQuestId is absent', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({}),
+    });
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(/no active quest/i);
+  });
+});
+
+describe('launch-review skill (issue #2 — auto-discovers active quest)', () => {
+  it('SKILL.md instructs reading state.json and does not prompt for quest ID', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const skillPath = path.resolve(__dirname, '..', 'skills', 'launch-review', 'SKILL.md');
+    const content = realFs.readFileSync(skillPath, 'utf-8');
+
+    // Must reference state.json as the source of the active quest.
+    expect(content).toMatch(/state\.json/);
+    expect(content).toMatch(/currentQuestId/);
+    // Must reference the helper that resolves the active plan path.
+    expect(content).toContain('resolveActiveQuestPlanPath');
+    // Must describe the "no active quest" exit path.
+    expect(content).toMatch(/no active quest/i);
+    // Must NOT contain the old <quest-id> placeholder in the helper call —
+    // the skill should resolve the path itself, not interpolate a prompted ID.
+    expect(content).not.toContain('recordLaunchReviewSignOff(".pi/quests/<quest-id>/');
   });
 });
 

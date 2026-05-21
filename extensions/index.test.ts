@@ -210,14 +210,21 @@ describe('piQuestExtension', () => {
 
   it('registers one command, three shortcuts (dashboard + freeze chords), and seven tools', () => {
     piQuestExtension(mockPi as any);
-    // Dashboard + Ctrl+P (soft freeze) + Ctrl+Shift+P (hard freeze)
+    // Dashboard + Alt+P (soft freeze) + Ctrl+Shift+P (hard freeze)
+    //
+    // Soft freeze used to live on Ctrl+P, but that collides with pi v0.75's
+    // built-in model-switch chord (pi logs `Extension shortcut 'ctrl+p' ...
+    // conflicts with built-in shortcut. Skipping.` and silently drops the
+    // registration). Alt+P avoids the collision while preserving the
+    // single-key freeze property mandated by ADR 013's "Asymmetric Interrupt
+    // Cost" principle.
     expect(mockPi.registerShortcut).toHaveBeenCalledTimes(3);
     expect(mockPi.registerShortcut).toHaveBeenCalledWith(
       'ctrl+shift+g',
       expect.objectContaining({ description: 'Open quest dashboard' }),
     );
     expect(mockPi.registerShortcut).toHaveBeenCalledWith(
-      'ctrl+p',
+      'alt+p',
       expect.objectContaining({
         description: expect.stringMatching(/soft freeze/i),
       }),
@@ -233,6 +240,12 @@ describe('piQuestExtension', () => {
     const chords = mockPi.registerShortcut.mock.calls.map((c: any[]) => c[0]);
     expect(new Set(chords).size).toBe(chords.length);
 
+    // The old Ctrl+P binding must be gone — it collides with pi v0.75's
+    // built-in model-switch chord and was silently dropped at startup.
+    expect(mockPi.registerShortcut).not.toHaveBeenCalledWith(
+      'ctrl+p',
+      expect.anything(),
+    );
     expect(mockPi.registerShortcut).not.toHaveBeenCalledWith(
       'alt+g',
       expect.anything(),
@@ -248,6 +261,122 @@ describe('piQuestExtension', () => {
       'quest_progress_beat',
       'quest_concession',
     ]);
+  });
+
+  describe('/quest freeze and /quest unfreeze (slash-command fallback for Alt+P)', () => {
+    // The single-key Alt+P chord is the load-bearing UX (ADR 013 §8 — Asymmetric
+    // Interrupt Cost), but some terminals can't bind Alt-chords. These slash
+    // commands give those users an equivalent path, emitting the same audit
+    // events.
+    const mockCtx = (cwd: string) => ({
+      cwd,
+      ui: { ...mockUi, setWidget: vi.fn() },
+    });
+
+    const questId = 'sf-quest';
+    const qDir = `/project/.pi/quests/${questId}`;
+
+    function seedQuest(overrides: any = {}) {
+      const workflow = {
+        id: questId,
+        title: 'Soft Freeze Quest',
+        status: 'executing',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        source: {},
+        artifacts: { handoff: 'H.md' },
+        ...overrides,
+      };
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: questId }),
+        [`${qDir}/workflow.json`]: JSON.stringify(workflow),
+      });
+    }
+
+    function readEvents(): any[] {
+      const path = `${qDir}/telemetry/events.jsonl`;
+      if (!vol.existsSync(path)) return [];
+      const raw = vol.readFileSync(path, 'utf-8') as string;
+      return raw.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    }
+
+    it('/quest freeze engages a soft freeze and emits freeze_engaged', async () => {
+      seedQuest();
+      piQuestExtension(mockPi as any);
+      const handler = registeredCommands['quest'].handler;
+
+      await handler('freeze', mockCtx('/project'));
+
+      const persisted = JSON.parse(
+        vol.readFileSync(`${qDir}/workflow.json`, 'utf-8') as string,
+      );
+      expect(persisted.freeze).toBeDefined();
+      expect(persisted.freeze.mode).toBe('soft');
+      expect(persisted.freeze.triggered_by).toBe('user');
+
+      const events = readEvents();
+      const engaged = events.find((e) => e.event === 'freeze_engaged');
+      expect(engaged).toBeDefined();
+      expect(engaged.mode).toBe('soft');
+      expect(engaged.triggered_by).toBe('user');
+      expect(engaged.questId).toBe(questId);
+    });
+
+    it('/quest unfreeze releases an active soft freeze and emits freeze_released', async () => {
+      seedQuest({
+        freeze: {
+          mode: 'soft',
+          engaged_at: '2024-01-01T00:00:00Z',
+          triggered_by: 'user',
+        },
+      });
+      piQuestExtension(mockPi as any);
+      const handler = registeredCommands['quest'].handler;
+
+      await handler('unfreeze', mockCtx('/project'));
+
+      const persisted = JSON.parse(
+        vol.readFileSync(`${qDir}/workflow.json`, 'utf-8') as string,
+      );
+      expect(persisted.freeze).toBeUndefined();
+
+      const events = readEvents();
+      const released = events.find((e) => e.event === 'freeze_released');
+      expect(released).toBeDefined();
+      expect(released.triggered_by).toBe('user');
+      expect(released.questId).toBe(questId);
+    });
+
+    it('/quest freeze is idempotent — second invocation releases (toggle parity with Alt+P)', async () => {
+      seedQuest();
+      piQuestExtension(mockPi as any);
+      const handler = registeredCommands['quest'].handler;
+
+      await handler('freeze', mockCtx('/project'));
+      await handler('freeze', mockCtx('/project'));
+
+      const persisted = JSON.parse(
+        vol.readFileSync(`${qDir}/workflow.json`, 'utf-8') as string,
+      );
+      // Second freeze call on an already-frozen quest releases it, matching
+      // the toggle semantics of the Alt+P chord.
+      expect(persisted.freeze).toBeUndefined();
+
+      const events = readEvents();
+      expect(events.filter((e) => e.event === 'freeze_engaged')).toHaveLength(1);
+      expect(events.filter((e) => e.event === 'freeze_released')).toHaveLength(1);
+    });
+
+    it('/quest unfreeze on a non-frozen quest is a no-op (no freeze_released event)', async () => {
+      seedQuest();
+      piQuestExtension(mockPi as any);
+      const handler = registeredCommands['quest'].handler;
+
+      await handler('unfreeze', mockCtx('/project'));
+
+      const events = readEvents();
+      expect(events.filter((e) => e.event === 'freeze_released')).toHaveLength(0);
+    });
   });
 
   describe('quest_write_workflow', () => {

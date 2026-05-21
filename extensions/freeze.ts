@@ -2,8 +2,14 @@
  * Swarm-freeze chord handlers — M3-2 / ADR 013 §8.
  *
  * Two chords, exposed at the extension level by `index.ts`:
- *   - Ctrl+P        — soft freeze toggle (engage or release).
+ *   - Alt+P         — soft freeze toggle (engage or release). Rotated from
+ *                     Ctrl+P, which collides with pi v0.75's built-in
+ *                     model-switch chord and is silently dropped at startup.
  *   - Ctrl+Shift+P  — hard freeze with confirmation, kills running runs.
+ *
+ * The `/quest freeze` and `/quest unfreeze` slash commands in `index.ts` are a
+ * fallback alias for terminals that can't bind Alt-chords; they reuse
+ * `handleSoftFreezeChord` so the audit-event trail is identical.
  *
  * Soft freeze sets `workflow.freeze = { mode: "soft", ... }` and is a no-spawn
  * guard: in-flight runs continue, but the router refuses to launch new runs
@@ -101,8 +107,8 @@ export function isQuestSoftFrozen(qDir: string): boolean {
 }
 
 /**
- * Toggle handler for `Ctrl+P`. Engages a soft freeze on the active quest, or
- * releases it if already engaged.
+ * Toggle handler for `Alt+P` (and the `/quest freeze` slash-command fallback).
+ * Engages a soft freeze on the active quest, or releases it if already engaged.
  *
  * No-ops with an info notification if no quest is active.
  */
@@ -127,7 +133,7 @@ export async function handleSoftFreezeChord(ctx: FreezeContext): Promise<void> {
 		inFlightRuns: inFlight,
 	});
 	ctx.ui.notify(
-		`Soft freeze engaged · ${inFlight} run${inFlight === 1 ? "" : "s"} completing · Ctrl+P to release`,
+		`Soft freeze engaged · ${inFlight} run${inFlight === 1 ? "" : "s"} completing · Alt+P to release`,
 		"info",
 	);
 }

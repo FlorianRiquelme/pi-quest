@@ -36,17 +36,25 @@ function stripFrontmatter(raw: string): string {
  */
 export function engageSkillFactory(pi: ExtensionAPI): EngageSkill {
 	return async (skillName: string): Promise<boolean> => {
+		// pi 0.75 returns skill slash-commands with names like `skill:quest-uat`;
+		// older releases returned them bare. Match against the trailing segment
+		// so we work against both.
+		const target = skillName.replace(/^skill:/, "");
 		const cmd = pi
 			.getCommands()
-			.find((c) => c.source === "skill" && c.name === skillName);
+			.find((c) => c.source === "skill" && c.name.replace(/^skill:/, "") === target);
 		if (!cmd) return false;
 
 		const skillPath = cmd.sourceInfo.path;
-		const baseDir = cmd.sourceInfo.baseDir ?? path.dirname(skillPath);
+		// SlashCommandInfo.sourceInfo.baseDir is the *package* root, not the
+		// skill directory pi's own _expandSkillCommand wants. SKILL.md sits in
+		// its skill's directory, so the parent of the file path is the right
+		// "References are relative to ..." value.
+		const baseDir = path.dirname(skillPath);
 		const raw = fs.readFileSync(skillPath, "utf-8");
 		const body = stripFrontmatter(raw).trim();
 		const block =
-			`<skill name="${skillName}" location="${skillPath}">\n` +
+			`<skill name="${target}" location="${skillPath}">\n` +
 			`References are relative to ${baseDir}.\n\n` +
 			`${body}\n` +
 			`</skill>`;

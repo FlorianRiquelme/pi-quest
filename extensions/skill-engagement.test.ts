@@ -18,14 +18,18 @@ interface MockPi {
 
 function makePi(opts: {
   skills?: Array<{ name: string; path: string; baseDir?: string }>;
+  /** Match pi 0.75 (prefixed `skill:` names) or pre-0.75 (bare names). */
+  nameStyle?: 'prefixed' | 'bare';
 }): MockPi {
   const skills = opts.skills ?? [];
+  const prefixed = opts.nameStyle !== 'bare';
   return {
     getCommands: () =>
       skills.map((s) => ({
-        name: s.name,
+        name: prefixed ? `skill:${s.name}` : s.name,
         source: 'skill' as const,
-        sourceInfo: { path: s.path, baseDir: s.baseDir ?? s.path.replace(/\/SKILL\.md$/, '') },
+        // pi 0.75: sourceInfo.baseDir is the PACKAGE root, not the skill dir.
+        sourceInfo: { path: s.path, baseDir: s.baseDir ?? '/proj' },
       })),
     sendUserMessage: vi.fn(),
   };
@@ -76,6 +80,41 @@ describe('engageSkill', () => {
     expect(payload).not.toContain('some-flag: true');
     // The leading `---` fence must not leak in either.
     expect(payload).not.toMatch(/^<skill[^>]+>\nReferences[^\n]+\n\n---/m);
+  });
+
+  it('uses the skill directory (not the package root) for the References line', async () => {
+    vol.fromJSON({
+      '/proj/skills/launch-review/SKILL.md':
+        '---\nname: quest-launch-review\n---\n\nBody.',
+    });
+    // sourceInfo.baseDir is the package root in pi 0.75 — engagement must
+    // ignore it and use the SKILL.md's parent directory instead.
+    const pi = makePi({
+      skills: [
+        { name: 'quest-launch-review', path: '/proj/skills/launch-review/SKILL.md', baseDir: '/proj' },
+      ],
+    });
+
+    await engageSkillFactory(pi as any)('quest-launch-review');
+
+    const payload = pi.sendUserMessage.mock.calls[0][0] as string;
+    expect(payload).toContain('References are relative to /proj/skills/launch-review.');
+    expect(payload).not.toContain('References are relative to /proj.\n');
+  });
+
+  it('matches when pi reports bare skill names (pre-0.75 compatibility)', async () => {
+    vol.fromJSON({
+      '/proj/skills/launch-review/SKILL.md':
+        '---\nname: quest-launch-review\n---\n\nBody.',
+    });
+    const pi = makePi({
+      skills: [{ name: 'quest-launch-review', path: '/proj/skills/launch-review/SKILL.md' }],
+      nameStyle: 'bare',
+    });
+
+    const ok = await engageSkillFactory(pi as any)('quest-launch-review');
+    expect(ok).toBe(true);
+    expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
   });
 
   it('returns false and does not send a message when the skill is not loaded', async () => {

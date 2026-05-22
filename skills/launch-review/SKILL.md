@@ -11,9 +11,26 @@ Your purpose is the **Trust Trinity ceremony**: walk the user through three piec
 
 ## Input
 
-- Quest workspace: `.pi/quests/<quest-id>/`
+- Active quest workspace: `.pi/quests/<currentQuestId>/`, where `currentQuestId` is read from `.pi/quest/state.json`.
 - `IMPLEMENTATION_PLAN.md` — the plan produced by the planning agent. Its YAML frontmatter holds the Trust Trinity artifacts (`blast_radius`, `pre_mortem`, `compiler_diagnostics`) and accumulates `launch_review` once the user signs off.
 - `RESOLVED_HANDOFF.md` and `RECON.md` — useful context for any user questions.
+
+**Auto-discover the active quest** — never prompt the user for a quest ID. At the start, resolve the plan path from `state.json`:
+
+```ts
+import { resolveActiveQuestPlanPath } from "pi-quest/extensions/launch-review";
+
+let planPath: string;
+try {
+  planPath = resolveActiveQuestPlanPath(process.cwd());
+} catch (err) {
+  // "No active quest …" — surface the message and stop. Do NOT prompt for an ID.
+  console.error((err as Error).message);
+  return;
+}
+```
+
+`resolveActiveQuestPlanPath` reads `currentQuestId` from `state.json` and returns the absolute path to the active quest's plan. When no quest is active it throws a clear "No active quest …" error — exit immediately with that message rather than asking the user to supply an ID.
 
 Read the plan frontmatter via `readPlanFrontmatter(planPath)` from `extensions/launch-review.ts`. Re-read after every write so what you display tracks what is on disk.
 
@@ -141,16 +158,12 @@ When all three sections have been walked through, every error is gone, every war
 
 ```ts
 import { recordLaunchReviewSignOff } from "pi-quest/extensions/launch-review";
-recordLaunchReviewSignOff(".pi/quests/<quest-id>/IMPLEMENTATION_PLAN.md");
+recordLaunchReviewSignOff(planPath);
 ```
 
-This writes `launch_review.signed_off_at` (ISO 8601) and `launch_review.signed_off_by: user` without touching `acknowledged_warnings`.
+(`planPath` is the value returned by `resolveActiveQuestPlanPath` at the start of the skill.) This writes `launch_review.signed_off_at` (ISO 8601) and `launch_review.signed_off_by: user` without touching `acknowledged_warnings`.
 
-After sign-off, instruct the user to run:
-
-```
-/quest set-status <quest-id> executing
-```
+After sign-off, instruct the user to run `/quest set-status <currentQuestId> executing` (substitute the active quest's ID — also visible via `/quest status`).
 
 The Launch Gate verifies the four conditions (`blast_radius`, `pre_mortem`, no `severity: error` in `compiler_diagnostics`, sign-off present) and emits a `launch_gate` event. If the gate blocks, fix the missing piece and retry.
 
@@ -159,7 +172,7 @@ The Launch Gate verifies the four conditions (`blast_radius`, `pre_mortem`, no `
 If the user explicitly cancels the Launch Review (e.g. mitigations are too costly or the plan needs another planning round), do **not** sign off. Instead, advise the user:
 
 ```
-/quest set-status <quest-id> blocked
+/quest set-status <currentQuestId> blocked
 ```
 
 The transition `launch-review → blocked` is allowed; from `blocked`, the router can re-route the quest to `planned`, `resolved`, or another recovery state.
@@ -169,7 +182,7 @@ The transition `launch-review → blocked` is allowed; from `blocked`, the route
 For trivial iteration the user can bypass the ceremony entirely:
 
 ```
-/quest set-status <quest-id> executing --force
+/quest set-status <currentQuestId> executing --force
 ```
 
 The Launch Gate emits `outcome: "force_passed"` with `reasons: ["user_forced"]` so the audit trail still records that the ceremony was skipped.

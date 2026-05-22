@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { fs, vol } from 'memfs';
 import * as path from 'node:path';
 import {
@@ -10,8 +10,10 @@ import {
   evaluateLaunchGate,
   recordPreMortemEdit,
   recordAcknowledgedWarning,
+  resolveActiveQuestPlanPath,
   type PlanFrontmatter,
 } from './launch-review';
+import { clearPiHomeCache } from './paths';
 
 vi.mock('node:fs', async () => {
   const { fs } = await import('memfs');
@@ -365,6 +367,153 @@ describe('recordPreMortemEdit', () => {
     expect(edits).toHaveLength(2);
     expect(edits[0].field).toBe('detection_signal');
     expect(edits[1].field).toBe('recovery_plan');
+  });
+});
+
+describe('resolveActiveQuestPlanPath (issue #2 — auto-discover active quest)', () => {
+  const originalEnv = process.env.PI_QUEST_HOME;
+
+  beforeEach(() => {
+    vol.reset();
+    clearPiHomeCache();
+    delete process.env.PI_QUEST_HOME;
+  });
+
+  afterEach(() => {
+    if (originalEnv !== undefined) process.env.PI_QUEST_HOME = originalEnv;
+    else delete process.env.PI_QUEST_HOME;
+    clearPiHomeCache();
+  });
+
+  it('returns the plan path for the active quest from state.json', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q-active' }),
+      '/project/.pi/quests/q-active/IMPLEMENTATION_PLAN.md': '# Plan\n',
+    });
+    const planPath = resolveActiveQuestPlanPath('/project');
+    expect(planPath).toBe('/project/.pi/quests/q-active/IMPLEMENTATION_PLAN.md');
+  });
+
+  it('uses the workflow.artifacts.plan filename when available', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+        id: 'q1',
+        title: 't',
+        status: 'launch-review',
+        createdAt: '',
+        updatedAt: '',
+        source: {},
+        artifacts: { handoff: 'H.md', plan: 'CUSTOM_PLAN.md' },
+      }),
+      '/project/.pi/quests/q1/CUSTOM_PLAN.md': '# Plan\n',
+    });
+    expect(resolveActiveQuestPlanPath('/project')).toBe(
+      '/project/.pi/quests/q1/CUSTOM_PLAN.md',
+    );
+  });
+
+  it('throws a "no active quest" error when state.json is missing', () => {
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(/no active quest/i);
+  });
+
+  it('throws a "no active quest" error when currentQuestId is null', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: null }),
+    });
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(/no active quest/i);
+  });
+
+  it('throws a "no active quest" error when currentQuestId is absent', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({}),
+    });
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(/no active quest/i);
+  });
+
+  // P2 fix: resolver must use PI_QUEST_HOME / walk-up so subagents running
+  // inside Run Worktrees (where .pi/ is absent under cwd) still resolve the
+  // active quest from the main checkout's state.json.
+  it('walks up from a Run Worktree cwd to find the main checkout .pi/', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': '# Plan\n',
+    });
+    // Simulate a subagent process running inside its Run Worktree.
+    const worktreeCwd = '/project/.pi/quests/q1/worktrees/r1';
+    expect(resolveActiveQuestPlanPath(worktreeCwd)).toBe(
+      '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md',
+    );
+  });
+
+  it('honours PI_QUEST_HOME when set (parent-injected on subagent spawn)', () => {
+    process.env.PI_QUEST_HOME = '/project/.pi';
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': '# Plan\n',
+    });
+    // cwd is some unrelated tmp dir; PI_QUEST_HOME is the only signal.
+    expect(resolveActiveQuestPlanPath('/tmp/unrelated')).toBe(
+      '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md',
+    );
+  });
+
+  // P1 fix: defensive guard against a malformed/tampered workflow file. The
+  // resolver writes sign-off frontmatter to this path; an unconstrained value
+  // would let workflow.json redirect writes to arbitrary files.
+  it('rejects an artifacts.plan that escapes questDir via ..', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+        id: 'q1',
+        title: 't',
+        status: 'launch-review',
+        createdAt: '',
+        updatedAt: '',
+        source: {},
+        artifacts: { handoff: 'H.md', plan: '../../../etc/passwd' },
+      }),
+    });
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(
+      /escapes quest directory/i,
+    );
+  });
+
+  it('rejects an absolute artifacts.plan path', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+        id: 'q1',
+        title: 't',
+        status: 'launch-review',
+        createdAt: '',
+        updatedAt: '',
+        source: {},
+        artifacts: { handoff: 'H.md', plan: '/etc/passwd' },
+      }),
+    });
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(
+      /escapes quest directory/i,
+    );
+  });
+});
+
+describe('launch-review skill (issue #2 — auto-discovers active quest)', () => {
+  it('SKILL.md instructs reading state.json and does not prompt for quest ID', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const skillPath = path.resolve(__dirname, '..', 'skills', 'launch-review', 'SKILL.md');
+    const content = realFs.readFileSync(skillPath, 'utf-8');
+
+    // Must reference state.json as the source of the active quest.
+    expect(content).toMatch(/state\.json/);
+    expect(content).toMatch(/currentQuestId/);
+    // Must reference the helper that resolves the active plan path.
+    expect(content).toContain('resolveActiveQuestPlanPath');
+    // Must describe the "no active quest" exit path.
+    expect(content).toMatch(/no active quest/i);
+    // Must NOT contain the old <quest-id> placeholder in the helper call —
+    // the skill should resolve the path itself, not interpolate a prompted ID.
+    expect(content).not.toContain('recordLaunchReviewSignOff(".pi/quests/<quest-id>/');
   });
 });
 

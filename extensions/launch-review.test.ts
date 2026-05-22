@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { fs, vol } from 'memfs';
 import * as path from 'node:path';
 import {
@@ -13,6 +13,7 @@ import {
   resolveActiveQuestPlanPath,
   type PlanFrontmatter,
 } from './launch-review';
+import { clearPiHomeCache } from './paths';
 
 vi.mock('node:fs', async () => {
   const { fs } = await import('memfs');
@@ -370,8 +371,18 @@ describe('recordPreMortemEdit', () => {
 });
 
 describe('resolveActiveQuestPlanPath (issue #2 — auto-discover active quest)', () => {
+  const originalEnv = process.env.PI_QUEST_HOME;
+
   beforeEach(() => {
     vol.reset();
+    clearPiHomeCache();
+    delete process.env.PI_QUEST_HOME;
+  });
+
+  afterEach(() => {
+    if (originalEnv !== undefined) process.env.PI_QUEST_HOME = originalEnv;
+    else delete process.env.PI_QUEST_HOME;
+    clearPiHomeCache();
   });
 
   it('returns the plan path for the active quest from state.json', () => {
@@ -418,6 +429,72 @@ describe('resolveActiveQuestPlanPath (issue #2 — auto-discover active quest)',
       '/project/.pi/quest/state.json': JSON.stringify({}),
     });
     expect(() => resolveActiveQuestPlanPath('/project')).toThrow(/no active quest/i);
+  });
+
+  // P2 fix: resolver must use PI_QUEST_HOME / walk-up so subagents running
+  // inside Run Worktrees (where .pi/ is absent under cwd) still resolve the
+  // active quest from the main checkout's state.json.
+  it('walks up from a Run Worktree cwd to find the main checkout .pi/', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': '# Plan\n',
+    });
+    // Simulate a subagent process running inside its Run Worktree.
+    const worktreeCwd = '/project/.pi/quests/q1/worktrees/r1';
+    expect(resolveActiveQuestPlanPath(worktreeCwd)).toBe(
+      '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md',
+    );
+  });
+
+  it('honours PI_QUEST_HOME when set (parent-injected on subagent spawn)', () => {
+    process.env.PI_QUEST_HOME = '/project/.pi';
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': '# Plan\n',
+    });
+    // cwd is some unrelated tmp dir; PI_QUEST_HOME is the only signal.
+    expect(resolveActiveQuestPlanPath('/tmp/unrelated')).toBe(
+      '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md',
+    );
+  });
+
+  // P1 fix: defensive guard against a malformed/tampered workflow file. The
+  // resolver writes sign-off frontmatter to this path; an unconstrained value
+  // would let workflow.json redirect writes to arbitrary files.
+  it('rejects an artifacts.plan that escapes questDir via ..', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+        id: 'q1',
+        title: 't',
+        status: 'launch-review',
+        createdAt: '',
+        updatedAt: '',
+        source: {},
+        artifacts: { handoff: 'H.md', plan: '../../../etc/passwd' },
+      }),
+    });
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(
+      /escapes quest directory/i,
+    );
+  });
+
+  it('rejects an absolute artifacts.plan path', () => {
+    vol.fromJSON({
+      '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+      '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+        id: 'q1',
+        title: 't',
+        status: 'launch-review',
+        createdAt: '',
+        updatedAt: '',
+        source: {},
+        artifacts: { handoff: 'H.md', plan: '/etc/passwd' },
+      }),
+    });
+    expect(() => resolveActiveQuestPlanPath('/project')).toThrow(
+      /escapes quest directory/i,
+    );
   });
 });
 

@@ -18,35 +18,54 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadCurrentState, loadQuestWorkflow } from "./state.js";
-import { questDirPath } from "./paths.js";
+import { questDirPath, resolvePiHome } from "./paths.js";
 
 /* ================================ Active quest discovery ================================ */
+
+const NO_ACTIVE_QUEST_MESSAGE =
+	"No active quest. Run `/quest select <id>` or `/quest intake <handoff.md>` first.";
 
 /**
  * Resolve the IMPLEMENTATION_PLAN.md path for the currently active quest.
  *
- * Reads `state.json` (under the project's `.pi/`) and uses `currentQuestId` to
- * locate the quest workspace. If the workflow declares a custom `artifacts.plan`
- * filename it is honoured; otherwise the default `IMPLEMENTATION_PLAN.md` is
- * used.
+ * Locates the project's `.pi/` via `resolvePiHome` — honours `PI_QUEST_HOME`
+ * (subagent worktrees) and otherwise walks up from `cwd`. Reads `state.json`
+ * and uses `currentQuestId` to find the quest workspace. If the workflow
+ * declares a custom `artifacts.plan` filename it is honoured; the resolved
+ * path is verified to stay inside the quest directory.
  *
  * Throws an `Error` whose message starts with `No active quest` when no quest
- * is active (state file missing, empty, or `currentQuestId` null/undefined).
- * The Launch Review skill catches this and exits with a clear message — it
- * must never prompt the user for a quest ID (issue #2 / ADR 015).
+ * is active (project root not found, state file missing/empty, or
+ * `currentQuestId` null/undefined). The Launch Review skill catches this and
+ * exits with a clear message — it must never prompt the user for a quest ID
+ * (issue #2 / ADR 015).
+ *
+ * Throws `Invalid artifacts.plan` when `workflow.json` declares a plan
+ * filename that, after resolution, escapes the quest directory (absolute path
+ * or `..` segments). This is a defensive guard against a malformed or
+ * tampered workflow file corrupting an unintended file via sign-off writes.
  */
 export function resolveActiveQuestPlanPath(cwd: string): string {
-	const state = loadCurrentState(cwd);
+	const piHome = resolvePiHome(cwd);
+	if (!piHome) throw new Error(NO_ACTIVE_QUEST_MESSAGE);
+	const projectRoot = path.dirname(piHome);
+	const state = loadCurrentState(projectRoot);
 	const questId = state.currentQuestId;
-	if (!questId) {
-		throw new Error(
-			"No active quest. Run `/quest select <id>` or `/quest intake <handoff.md>` first.",
-		);
-	}
-	const questDir = questDirPath(cwd, questId);
+	if (!questId) throw new Error(NO_ACTIVE_QUEST_MESSAGE);
+	const questDir = questDirPath(projectRoot, questId);
 	const workflow = loadQuestWorkflow(questDir);
 	const planFilename = workflow?.artifacts?.plan ?? "IMPLEMENTATION_PLAN.md";
-	return path.join(questDir, planFilename);
+	const resolved = path.resolve(questDir, planFilename);
+	const questDirResolved = path.resolve(questDir);
+	if (
+		resolved !== questDirResolved &&
+		!resolved.startsWith(questDirResolved + path.sep)
+	) {
+		throw new Error(
+			`Invalid artifacts.plan: '${planFilename}' escapes quest directory.`,
+		);
+	}
+	return resolved;
 }
 
 /* ================================ Frontmatter ================================ */

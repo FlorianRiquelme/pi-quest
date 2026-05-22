@@ -142,8 +142,11 @@ export function assembleWidgetLines(
 	 *
 	 * Soft-freeze override (M3-2 / ADR 013 §8): when the quest is soft-frozen,
 	 * replace the standard run summary with `❄ frozen · N runs completing ·
-	 * Ctrl+P to release`. Clocks still render to keep the Two Clocks signal
+	 * Alt+P to release`. Clocks still render to keep the Two Clocks signal
 	 * available. Mood is Resting in this branch.
+	 *
+	 * Chord rotated from Ctrl+P to Alt+P in v0.75-era — Ctrl+P collides with
+	 * pi's built-in model-switch chord and is silently dropped at startup.
 	 */
 	const glyphPart = colorize(mood, `  ${glyph} `, opts);
 	const detailParts: string[] = [];
@@ -154,7 +157,7 @@ export function assembleWidgetLines(
 		detailParts.push(
 			opts.theme.fg('dim', `${inFlight} ${wordRuns} completing`),
 		);
-		detailParts.push(opts.theme.fg('dim', 'Ctrl+P to release'));
+		detailParts.push(opts.theme.fg('dim', 'Alt+P to release'));
 	} else {
 		if (snapshot.runningCount > 0) {
 			detailParts.push(opts.theme.fg('warning', `${snapshot.runningCount} running`));

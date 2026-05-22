@@ -231,7 +231,7 @@ describe('assembleWidgetLines — soft-freeze line-2 indicator (M3-2)', () => {
     expect(lines[1]).toContain('❄'); // ❄
   });
 
-  it('renders "frozen · N runs completing · Ctrl+P to release" on line 2', () => {
+  it('renders "frozen · N runs completing · Alt+P to release" on line 2', () => {
     const lines = assembleWidgetLines(snapshot({ runningCount: 3 }), {
       width: 120,
       theme: fakeTheme() as any,
@@ -240,7 +240,10 @@ describe('assembleWidgetLines — soft-freeze line-2 indicator (M3-2)', () => {
     });
     expect(lines[1]).toMatch(/frozen/);
     expect(lines[1]).toMatch(/3 runs? completing/);
-    expect(lines[1]).toMatch(/Ctrl\+P/);
+    expect(lines[1]).toMatch(/Alt\+P/);
+    // Ctrl+P silently dropped at pi startup (collides with v0.75 model-switch
+    // chord); the widget must not advertise a chord the user can't actually press.
+    expect(lines[1]).not.toMatch(/Ctrl\+P/);
   });
 
   it('uses singular "run completing" when exactly one run is in flight', () => {

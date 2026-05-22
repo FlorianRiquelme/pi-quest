@@ -45,7 +45,8 @@ export interface QuestArtifacts {
  * Swarm-freeze state recorded by M3-2 / ADR 013 §8.
  *
  * Present only while a freeze is active. Soft freeze is reversible — the same
- * chord (Ctrl+P) clears the field. Hard freeze writes the field as part of
+ * chord (Alt+P) or the `/quest unfreeze` slash command clears the field. Hard
+ * freeze writes the field as part of
  * transitioning the quest to `blocked` (the freeze field itself is not
  * required for the blocked state, but the audit trail captures the cause).
  */

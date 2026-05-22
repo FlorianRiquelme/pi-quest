@@ -70,8 +70,12 @@ If 24-bit color isn't available: fall back to 5 named theme colors, skip the bre
 
 | Chord | Action |
 |---|---|
-| `Ctrl+P` | Soft freeze toggle. Sets a "no new spawns" flag on the active quest. In-flight runs continue; new runs blocked. Mood becomes Resting; line 2 shows `❄ frozen · N runs completing · Ctrl+P to release`. Reversible. |
+| `Alt+P` | Soft freeze toggle. Sets a "no new spawns" flag on the active quest. In-flight runs continue; new runs blocked. Mood becomes Resting; line 2 shows `❄ frozen · N runs completing · Alt+P to release`. Reversible. |
 | `Ctrl+Shift+P` | Hard freeze. Confirmation in widget area: `Abort N runs and discard their work? [y/N]`. On `y`: SIGTERM all runs (5s grace → SIGKILL), reap worktrees, quest → `blocked` with reason `user_aborted`. |
+
+The `/quest freeze` and `/quest unfreeze` slash commands are a fallback alias for the soft-freeze chord — same `freeze_engaged` / `freeze_released` audit events — for terminals that can't bind `Alt+P`. The chord choice itself is replaceable; the single-key property is not (see Asymmetric Interrupt Cost, below).
+
+**Chord history.** Soft freeze originally lived on `Ctrl+P`, but pi v0.75 introduced a built-in model-switch chord on `Ctrl+P` and now silently drops extension registrations for it at startup (`Extension shortcut 'ctrl+p' ... conflicts with built-in shortcut. Skipping.`). The chord was rotated to `Alt+P` to preserve the single-key freeze property. Hard freeze (`Ctrl+Shift+P`) is unaffected — no collision.
 
 Two new audit events: `freeze_engaged` (with `mode: "soft" | "hard"`, `in_flight_runs: <count>`) and `freeze_released`.
 
@@ -103,7 +107,7 @@ Per-run pause is intentionally deferred to M4 (dashboard surface).
 ## Followups
 
 - **M3 code**: refactor `extensions/ui/widget.ts` to support mood + rhythm + 250ms cache + glyph + Two Clocks.
-- **M3 code**: add key-binding handlers for `Ctrl+P` / `Ctrl+Shift+P` at the extension level.
+- **M3 code**: add key-binding handlers for `Alt+P` / `Ctrl+Shift+P` at the extension level (originally `Ctrl+P` / `Ctrl+Shift+P`; soft chord was rotated when pi v0.75 reclaimed `Ctrl+P` as a built-in model-switch chord).
 - **M3 schema**: add `freeze_engaged` and `freeze_released` events (extends ADR 010).
 
 ## References

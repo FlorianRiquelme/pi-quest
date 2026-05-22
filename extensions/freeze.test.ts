@@ -99,7 +99,7 @@ function makeCtx(overrides: any = {}) {
   };
 }
 
-describe('Ctrl+P (soft freeze toggle)', () => {
+describe('Alt+P (soft freeze toggle)', () => {
   beforeEach(() => {
     vol.reset();
     activeRuns.clear();
@@ -139,6 +139,15 @@ describe('Ctrl+P (soft freeze toggle)', () => {
     expect(engaged.in_flight_runs).toBe(2);
     expect(engaged.triggered_by).toBe('user');
     expect(engaged.questId).toBe(questId);
+
+    // The user-visible hint must point at the new Alt+P chord, not the old
+    // Ctrl+P (which pi v0.75 silently drops as a built-in conflict).
+    const engagedNotify = ctx.ui.notify.mock.calls.find((c: any[]) =>
+      typeof c[0] === 'string' && c[0].includes('Soft freeze engaged'),
+    );
+    expect(engagedNotify).toBeDefined();
+    expect(engagedNotify[0]).toContain('Alt+P to release');
+    expect(engagedNotify[0]).not.toContain('Ctrl+P');
   });
 
   it('releases soft freeze on second tap, emits freeze_released, clears workflow.freeze', async () => {

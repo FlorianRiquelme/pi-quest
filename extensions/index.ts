@@ -45,7 +45,8 @@ import {
 } from "./tools.js";
 import { reapOrphanedRuns, reapOrphanWorktrees, startLivenessSupervisor } from "./agents.js";
 import { startAnomalyPoller } from "./anomaly-poller.js";
-import { handleHardFreezeChord, handleSoftFreezeChord } from "./freeze.js";
+import { handleHardFreezeChord, handleSoftFreezeChord, isSoftFrozen } from "./freeze.js";
+import type { FreezeContext } from "./freeze.js";
 import { setQuestWidget } from "./ui/widget.js";
 
 /**
@@ -94,7 +95,7 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("quest", {
 		description:
-			"Quest execution engine. /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|resume <runId> [--note \"...\"]|config|dashboard]",
+			"Quest execution engine. /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|resume <runId> [--note \"...\"]|config|dashboard|freeze|unfreeze]",
 		handler: async (args, ctx) => {
 			// Resume's --note may carry spaces, so we tokenize while keeping
 			// quoted strings together rather than naive split-on-whitespace.
@@ -142,10 +143,27 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 				case "set-status":
 					await cmdSetStatus(ctx, parts.slice(1));
 					break;
+				case "freeze":
+					// Slash-command fallback alias for the Alt+P chord (ADR 013 §8).
+					// Toggle semantics match the chord: invoking on a frozen quest
+					// releases it. Same `freeze_engaged` / `freeze_released` audit
+					// events are emitted.
+					await handleSoftFreezeChord(ctx as FreezeContext);
+					setQuestWidget(ctx);
+					break;
+				case "unfreeze":
+					// Explicit release path. No-ops cleanly when no freeze is
+					// active (the chord handler short-circuits without emitting
+					// `freeze_released`).
+					if (isSoftFrozen(ctx.cwd)) {
+						await handleSoftFreezeChord(ctx as FreezeContext);
+					}
+					setQuestWidget(ctx);
+					break;
 				default:
 					ctx.ui.notify(`Unknown quest subcommand: ${subcommand}`, "error");
 					ctx.ui.notify(
-						"Usage: /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|resume <runId> [--note \"...\"]|config|dashboard]",
+						"Usage: /quest [status|list|intake <handoff.md>|select <id>|set-status <id> <status>|brief|resume <runId> [--note \"...\"]|config|dashboard|freeze|unfreeze]",
 						"info",
 					);
 			}
@@ -154,11 +172,15 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 
 	/* ================================ Shortcuts ================================ */
 
-	// `ctrl+shift+g` opens the dashboard. The two freeze chords (`ctrl+p`,
-	// `ctrl+shift+p`) come from ADR 013 §8. These chords were picked because
-	// they do not collide with any pi-coding-agent editor binding documented in
-	// `examples/`; if a future pi release reclaims them, the chord can be moved
-	// here without touching the handler.
+	// `ctrl+shift+g` opens the dashboard. The two freeze chords come from
+	// ADR 013 §8. Soft freeze originally lived on `ctrl+p`, but pi v0.75 added
+	// a built-in model-switch chord that claims `ctrl+p` and silently drops
+	// extension registrations for it at startup (`Extension shortcut 'ctrl+p'
+	// ... conflicts with built-in shortcut. Skipping.`). Rotated to `alt+p` to
+	// preserve the single-key freeze property that ADR 013 calls Asymmetric
+	// Interrupt Cost. Hard freeze stays on `ctrl+shift+p` — no collision.
+	// `/quest freeze` and `/quest unfreeze` slash commands are a fallback alias
+	// for terminals that can't bind Alt-chords.
 	pi.registerShortcut("ctrl+shift+g", {
 		description: "Open quest dashboard",
 		handler: async (ctx) => {
@@ -167,7 +189,7 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerShortcut("ctrl+p", {
+	pi.registerShortcut("alt+p", {
 		description: "Toggle quest soft freeze (block new run spawns)",
 		handler: async (ctx) => {
 			await handleSoftFreezeChord(ctx);

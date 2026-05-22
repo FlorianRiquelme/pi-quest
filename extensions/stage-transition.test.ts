@@ -299,6 +299,68 @@ describe('transitionStage', () => {
       }
     });
 
+    it('engages quest-uat on verification-ready → uat-ready', async () => {
+      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      try {
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(
+            baseWorkflow({ status: 'verification-ready' }),
+          ),
+        });
+        const engageSkill = vi.fn().mockResolvedValue(true);
+        const result = await transitionStage(
+          mockCtx('/project'),
+          'q1',
+          'uat-ready',
+          {},
+          engageSkill,
+        );
+        expect(result.outcome).toBe('applied');
+        expect(engageSkill).toHaveBeenCalledWith('quest-uat');
+      } finally {
+        stdoutSpy.mockRestore();
+      }
+    });
+
+    it('re-engages quest-uat on uat-failed → uat-ready re-entry (re-entry policy)', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(
+          baseWorkflow({
+            status: 'uat-failed',
+            // Doorbell already fired on the original entry; engagement should
+            // still re-fire on every re-entry (issue #4 resolution).
+            uat_doorbell_fired_at: '2024-01-02T00:00:00.000Z',
+          }),
+        ),
+      });
+      const engageSkill = vi.fn().mockResolvedValue(true);
+      const result = await transitionStage(
+        mockCtx('/project'),
+        'q1',
+        'uat-ready',
+        {},
+        engageSkill,
+      );
+      expect(result.outcome).toBe('applied');
+      expect(engageSkill).toHaveBeenCalledWith('quest-uat');
+    });
+
+    it('engages quest-review-discussion when entering the reviewing stage', async () => {
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseWorkflow()),
+      });
+      const engageSkill = vi.fn().mockResolvedValue(true);
+      const result = await transitionStage(
+        mockCtx('/project'),
+        'q1',
+        'reviewing',
+        {},
+        engageSkill,
+      );
+      expect(result.outcome).toBe('applied');
+      expect(engageSkill).toHaveBeenCalledWith('quest-review-discussion');
+    });
+
     it('does not fire doorbell on uat-failed → uat-ready re-entry', async () => {
       const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
       try {

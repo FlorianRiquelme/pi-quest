@@ -824,6 +824,62 @@ describe('commands', () => {
       expect(persistedState.lastSeenEventTimestamp?.q1).toBe('2026-05-19T17:00:00.000Z');
     });
 
+    it('tryAutoRoute on planned → launch-review engages the quest-launch-review skill', async () => {
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1',
+          title: 'My Quest',
+          status: 'planned',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+          source: {},
+          artifacts: { handoff: 'HANDOFF.md' },
+        }),
+      });
+      const ctx = mockCtx('/project');
+      const engageSkill = vi.fn().mockResolvedValue(true);
+
+      const advanced = await tryAutoRoute(ctx, engageSkill);
+
+      expect(advanced).toBe(true);
+      expect(engageSkill).toHaveBeenCalledWith('quest-launch-review');
+      // The previous manual-typing notify must not fire on the success path.
+      expect(notifyCalls.find((c) => c.msg.includes('/quest set-status'))).toBeUndefined();
+      // Status advanced.
+      const wf = JSON.parse(
+        vol.readFileSync('/project/.pi/quests/q1/workflow.json', 'utf-8') as string,
+      );
+      expect(wf.status).toBe('launch-review');
+    });
+
+    it('tryAutoRoute on planned → launch-review emits a fallback notify when the skill is not loaded', async () => {
+      vol.fromJSON({
+        '/project/.pi/quest/state.json': JSON.stringify({ currentQuestId: 'q1' }),
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1',
+          title: 'My Quest',
+          status: 'planned',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+          source: {},
+          artifacts: { handoff: 'HANDOFF.md' },
+        }),
+      });
+      const ctx = mockCtx('/project');
+      const engageSkill = vi.fn().mockResolvedValue(false);
+
+      const advanced = await tryAutoRoute(ctx, engageSkill);
+
+      expect(advanced).toBe(true);
+      expect(engageSkill).toHaveBeenCalledWith('quest-launch-review');
+      // Fallback notify points at the slash command so the user isn't stranded.
+      const fallback = notifyCalls.find((c) =>
+        c.msg.includes('/skill:quest-launch-review'),
+      );
+      expect(fallback).toBeDefined();
+    });
+
     it('tryAutoRoute displays the Brief and advances lastSeenEventTimestamp when there are newer events', async () => {
       const eventLine = JSON.stringify({
         event: 'stage_entered',

@@ -24,6 +24,20 @@ import {
 	runLaunchGate,
 } from "./commands.js";
 import { isAutonomousToInteractiveTransition } from "./homecoming-brief.js";
+import type { EngageSkill } from "./skill-engagement.js";
+
+/**
+ * Map of interactive Quest Stages → the skill that owns the user-facing
+ * walkthrough for that stage. When `transitionStage` advances into one of these
+ * stages, the corresponding skill is auto-engaged so the user lands *in* the
+ * skill (issue #4 / friction-elimination principle). Re-entry re-engages
+ * every time — there is no per-stage idempotency marker.
+ */
+const STAGE_SKILL: Partial<Record<QuestStatus, string>> = {
+	"launch-review": "quest-launch-review",
+	reviewing: "quest-review-discussion",
+	"uat-ready": "quest-uat",
+};
 
 export type StageTransitionRejection =
 	| "quest_not_found"
@@ -66,6 +80,7 @@ export async function transitionStage(
 	questId: string,
 	target: QuestStatus,
 	options: { force?: boolean },
+	engageSkill?: EngageSkill,
 ): Promise<StageTransitionResult> {
 	const force = !!options.force;
 	const questDir = questDirPath(ctx.cwd, questId);
@@ -148,6 +163,11 @@ export async function transitionStage(
 
 	if (isAutonomousToInteractiveTransition(previousStatus, workflow.status)) {
 		await regenerateHomecomingBrief(ctx, questId);
+	}
+
+	const skillName = STAGE_SKILL[workflow.status];
+	if (skillName && engageSkill) {
+		await engageSkill(skillName);
 	}
 
 	return {

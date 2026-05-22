@@ -36,7 +36,7 @@ The `Run.status` enum gains `paused`, joining `running | completed | failed | ca
 
 | Rule | Trigger | Detection | Default threshold |
 |---|---|---|---|
-| `lockfile_drift` | A lockfile is modified in the run's worktree | Supervisor polls `git diff --name-only` every ~30s | Any change to `pnpm-lock.yaml`, `bun.lock`, `yarn.lock`, `package-lock.json` |
+| ~~`lockfile_drift`~~ | ~~A lockfile is modified in the run's worktree~~ | ~~Supervisor polls `git diff --name-only` every ~30s~~ | **Removed 2026-05-22 — see [Amendments](#amendments) below.** |
 | `unbounded_diff` | Cumulative diff exceeds size threshold | Supervisor polls `git diff --shortstat` every ~30s | 50 files OR 2000 lines |
 | `heartbeat_missed` | No semantic `progress_beat` for X minutes; PID alive | Track timestamp of last non-`alive`-phase beat | 5 minutes |
 

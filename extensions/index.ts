@@ -45,6 +45,7 @@ import {
 } from "./tools.js";
 import { reapOrphanedRuns, reapOrphanWorktrees, startLivenessSupervisor } from "./runs/runner.js";
 import { startAnomalyPoller } from "./runs/supervisor.js";
+import { startCloseoutWatcher } from "./runs/watcher.js";
 import { handleHardFreezeChord, handleSoftFreezeChord, isSoftFrozen } from "./freeze.js";
 import type { FreezeContext } from "./freeze.js";
 import { engageSkillFactory } from "./skill-engagement.js";
@@ -437,6 +438,12 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 		// the log-only `locked_out_write` rule. The interval unrefs itself so it
 		// doesn't keep pi alive.
 		startAnomalyPoller(ctx.cwd);
+		// ADR 018: start the Batch Closeout watcher. `extensionStartTime` is
+		// the cross-session gate — Closeouts only fire for Runs whose
+		// `completedAt >= extensionStartTime`. The Homecoming Brief (ADR 015)
+		// handles older Runs.
+		const extensionStartTime = new Date().toISOString();
+		startCloseoutWatcher(ctx.cwd, pi, extensionStartTime);
 		setQuestWidget(ctx);
 	});
 }

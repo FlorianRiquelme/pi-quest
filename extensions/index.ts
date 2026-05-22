@@ -215,11 +215,25 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "quest_run_work_item",
 		label: "Run Quest Work Item",
-		description: "Start an implementation subagent for a single Quest work item in the background.",
-		promptSnippet: "Start a quest work item implementation subagent without blocking the orchestrator",
+		description:
+			"Start an implementation subagent for a single Quest work item in the background. " +
+			"Per ADR 018: every call must pass batchId (Orchestrator-assigned grouping ID, " +
+			"same on every call in the Batch) and batchSize (the total Run count the " +
+			"Orchestrator commits to launching for that batchId). For a single Run, use " +
+			"a unique batchId and batchSize=1.",
+		promptSnippet:
+			"Start a quest work item implementation subagent without blocking the orchestrator. Pass batchId + batchSize for every call (ADR 018 Batch Closeout).",
 		parameters: Type.Object({
 			questId: Type.String({ description: "Quest ID" }),
 			workItemId: Type.String({ description: "Work item ID, e.g. 001" }),
+			batchId: Type.String({
+				description:
+					"Orchestrator-assigned Batch grouping ID. Same on every call in the Batch (e.g. `batch-<questId>-<timestamp>`).",
+			}),
+			batchSize: Type.Integer({
+				minimum: 1,
+				description: "Total Run count the Orchestrator commits to launching for this batchId (≥ 1).",
+			}),
 			optionalModel: Type.Optional(Type.String({ description: "Override subagent model" })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

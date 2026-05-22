@@ -43,7 +43,35 @@ interface RenderContext {
 export interface QuestRunWorkItemParams {
 	questId: string;
 	workItemId: string;
+	/** ADR 018: Orchestrator-assigned grouping ID for this Batch. */
+	batchId: string;
+	/** ADR 018: declared total Run count for this Batch (≥ 1). */
+	batchSize: number;
 	optionalModel?: string;
+}
+
+/**
+ * Pure validator: given the existing summaries on disk for a `batchId`, check
+ * that a new `quest_run_work_item` call's `batchSize` is consistent with the
+ * earlier declarations in the same Batch.
+ *
+ * Returns `{ ok: true }` when:
+ *   - No prior summaries (this is the first call in the Batch), OR
+ *   - All prior summaries with a `batchSize` agree with the new one.
+ *
+ * Returns `{ ok: false, declaredSize }` otherwise — `declaredSize` is the
+ * earliest contradicting value, so the caller can surface a useful error.
+ */
+export function validateBatchSizeConsistency(
+	existingSummariesForBatchId: BackgroundRunSummary[],
+	newCallBatchSize: number,
+): { ok: true } | { ok: false; declaredSize: number } {
+	for (const s of existingSummariesForBatchId) {
+		if (typeof s.batchSize === "number" && s.batchSize !== newCallBatchSize) {
+			return { ok: false, declaredSize: s.batchSize };
+		}
+	}
+	return { ok: true };
 }
 
 export async function executeQuestRunWorkItem(
@@ -73,6 +101,60 @@ export async function executeQuestRunWorkItem(
 		};
 	}
 
+	// ADR 018 §Tool surface: reject batch_size_drift before spawning. A second
+	// call in the same Batch with a different `batchSize` means the
+	// Orchestrator's state has drifted; surface a halt-tier anomaly and refuse.
+	if (!Number.isInteger(params.batchSize) || params.batchSize < 1) {
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `batchSize must be a positive integer (got ${params.batchSize}).`,
+				},
+			],
+			isError: true,
+			details: { reason: "invalid_batch_size", batchSize: params.batchSize },
+		};
+	}
+	const existing = listRunSummaries(questDir).filter((s) => s.batchId === params.batchId);
+	const drift = validateBatchSizeConsistency(existing, params.batchSize);
+	if (!drift.ok) {
+		const telemetryPath = path.join(questDir, "telemetry", "events.jsonl");
+		ensureDir(path.dirname(telemetryPath));
+		const event = validateEvent({
+			event: "anomaly_detected",
+			timestamp: new Date().toISOString(),
+			questId: params.questId,
+			tier: "halt",
+			rule: "batch_size_drift",
+			should_pause: false,
+			details: {
+				batchId: params.batchId,
+				declaredSize: drift.declaredSize,
+				newCallSize: params.batchSize,
+			},
+		});
+		fs.appendFileSync(telemetryPath, JSON.stringify(event) + "\n", "utf-8");
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text:
+						`Batch '${params.batchId}' was declared with batchSize=${drift.declaredSize}; ` +
+						`this call passed batchSize=${params.batchSize}. Refusing — fix the ` +
+						`Orchestrator state before retrying.`,
+				},
+			],
+			isError: true,
+			details: {
+				reason: "batch_size_drift",
+				batchId: params.batchId,
+				declaredSize: drift.declaredSize,
+				newCallSize: params.batchSize,
+			},
+		};
+	}
+
 	const task = [
 		`Execute the work item: ${workItemPath}`,
 		`The quest workspace is: ${questDir}`,
@@ -92,6 +174,8 @@ export async function executeQuestRunWorkItem(
 		agentName: "quest-implementation",
 		task,
 		model: params.optionalModel,
+		batchId: params.batchId,
+		batchSize: params.batchSize,
 		questBranch: workflow?.questBranch,
 		baseSha: workflow?.baseSha,
 		onStatus: (run) => {

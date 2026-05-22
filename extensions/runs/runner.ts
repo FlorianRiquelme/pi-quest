@@ -327,6 +327,10 @@ export async function startSubagentRun(options: {
 	questBranch?: string;
 	/** Base SHA the Quest forked from. Passed through to `createRunWorktree`. */
 	baseSha?: string;
+	/** ADR 018: Orchestrator-assigned Batch grouping ID. */
+	batchId?: string;
+	/** ADR 018: declared Batch size (≥ 1) — every call in the Batch agrees. */
+	batchSize?: number;
 	onStatus?: (summary: BackgroundRunSummary) => void;
 }): Promise<BackgroundRunSummary> {
 	// M3-2: soft-freeze guard. While a soft freeze is active on the quest,
@@ -464,6 +468,8 @@ export async function startSubagentRun(options: {
 		worktreePath,
 		runBranch: worktreeResult.runBranch,
 		questBranch,
+		batchId: options.batchId,
+		batchSize: options.batchSize,
 	};
 	activeRuns.set(runId, summary);
 	writeRunSummary(summary);

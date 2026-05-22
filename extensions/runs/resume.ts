@@ -375,6 +375,10 @@ export async function resumeRun(input: ResumeRunInput): Promise<ResumeRunResult>
 	}) as unknown as { pid?: number; unref?: () => void; stdout?: NodeJS.EventEmitter; stderr?: NodeJS.EventEmitter };
 	proc.unref?.();
 
+	// ADR 018 §Resume integration: synthesize a Batch-of-1 ID so the Closeout
+	// watcher fires naturally when the resumed Run terminates. No special
+	// casing in the runner — the standard `decideBatchCloseout` path serves
+	// both Orchestrator-launched Batches and Resume.
 	const newSummary: BackgroundRunSummary = {
 		runId: newRunId,
 		questId: input.questId,
@@ -393,6 +397,8 @@ export async function resumeRun(input: ResumeRunInput): Promise<ResumeRunResult>
 		runBranch,
 		questBranch: paused.questBranch,
 		continues_from: input.pausedRunId,
+		batchId: `resume-${input.pausedRunId}`,
+		batchSize: 1,
 	};
 	writeRunSummary(newSummary);
 

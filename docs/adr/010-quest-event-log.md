@@ -72,8 +72,30 @@ The two sources are deliberately distinct so that an explicit-beat silence with 
 - **M1 agent definitions**: update `agents/*.md` frontmatter to grant `quest_progress_beat, quest_concession` to autonomous agents; update each system prompt to instruct beat/concession emission discipline.
 - **M1 rate limiting**: cap explicit `progress_beat` at 1 per 15s per run; concessions are unbounded.
 
+## Amendments
+
+### 2026-05-22 — `batch_closeout` event variant (ADR 018)
+
+A thirteenth typed event variant joins the union: `batch_closeout`. Emitted by the in-process Closeout watcher (ADR 018) when all Runs in a Batch reach a terminal status in the same pi session that launched them. Shape:
+
+```
+{
+  event: "batch_closeout",
+  timestamp: ISO 8601,
+  questId, batchId, batchSize,
+  runIds: string[],
+  statuses: Record<runId, RunStatus>,
+  anomalies?: Array<{ runId, tier, rule }>,
+  delivered: boolean,            // whether pi.sendMessage succeeded
+  details?: ...
+}
+```
+
+The audit value is in `delivered: true | false` — it answers "why didn't the Orchestrator advance?" from logs alone when the synthetic `pi.sendMessage` fails.
+
 ## References
 - M1 grilling session.
-- `extensions/tools.ts:407` — current `quest_telemetry_event` implementation.
-- `extensions/agents.ts:298` — current hard-coded telemetry emission from `startSubagentRun`.
+- `extensions/tools.ts` — current `quest_telemetry_event` implementation.
+- `extensions/runs/runner.ts` — current hard-coded telemetry emission from `startSubagentRun`.
 - ADR 009 — In-process supervision (this ADR assumes the in-process model).
+- ADR 018 — Batch Closeout Protocol (registers the `batch_closeout` variant).

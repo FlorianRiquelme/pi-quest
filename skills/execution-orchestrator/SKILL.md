@@ -26,17 +26,37 @@ You have access to the `quest_run_work_item` tool that starts an **Implementatio
 
 You also have access to the `quest_rescue` tool for blocked implementation agents.
 
+### Batch parameters (ADR 018)
+
+Every `quest_run_work_item` call requires two parameters that group a Batch together:
+
+- `batchId: string` — your grouping ID for this Batch. Generate one ID per Batch (e.g. `batch-<questId>-<timestamp>`) and pass the **same** value on every call in the Batch.
+- `batchSize: number` — the **total** number of Runs you commit to launching for this Batch. Pass the actual count, not an estimate. Must be ≥ 1; a single-Run Batch passes `batchSize: 1`.
+
+If you pass a `batchSize` that contradicts a prior call for the same `batchId`, the tool rejects the call and emits a `batch_size_drift` halt-tier anomaly. Fix your state before retrying.
+
+### Batch Closeout messages
+
+When **all** Runs in a Batch reach a terminal status in-session, the supervisor sends you a hidden synthetic message with `customType: "quest-batch-closeout"` and `triggerTurn: true`. The payload carries per-Run `{ workItemId, runId, status, reportPath }`. Treat this message as authoritative:
+
+- **Read each `reportPath`** before deciding. Do not call `quest_work_item_status` first — the payload already tells you which Runs landed.
+- **Reason about the complete Batch picture.** If 3 Runs succeeded and 1 failed, rescue precisely — don't restart unaffected siblings.
+- **Then decide** retry / rescue / advance, and execute that decision in the same turn.
+
+A Batch Closeout never fires twice. If pi restarts mid-Batch, the Homecoming Brief (not a Closeout) integrates the outcome.
+
 ## Workflow
 
 1. Read the full implementation plan.
 2. For each planned batch:
    a. Identify which work items are ready (dependencies satisfied, no blocking issues).
-   b. Launch all work items in the batch using `quest_run_work_item`; record each returned `runId`.
-   c. Continue orchestration while runs execute, but **do not tight-poll**. After launching a batch, return control to the user with the run IDs and report/status paths. On a later user prompt, call `quest_work_item_status` to check progress. Only wait in-session if the user explicitly asks you to; if so, leave a meaningful delay between checks. Never call `quest_work_item_status` repeatedly back-to-back for a still-running item.
-   d. Once each run is `completed`, `failed`, or `cancelled`, collect compact reports.
-   e. Verify each report against acceptance criteria.
-   f. Run strong-model review if needed (use the verification rubric below).
-   g. Log telemetry for each agent run.
+   b. Generate one `batchId` for this Batch (e.g. `batch-<questId>-<ISO-timestamp>`) and count the Runs you are about to launch — that count is your `batchSize`.
+   c. Launch all work items in the batch using `quest_run_work_item`, passing the **same** `batchId` and `batchSize` on every call; record each returned `runId`.
+   d. After launching, **return control to the user with the run IDs and report/status paths.** Do not tight-poll. The supervisor will deliver a `quest-batch-closeout` synthetic message when every Run in the Batch terminates; that re-engages you automatically.
+   e. When you receive the Closeout (or when the user later asks for progress), collect compact reports.
+   f. Verify each report against acceptance criteria.
+   g. Run strong-model review if needed (use the verification rubric below).
+   h. Log telemetry for each agent run.
 3. If a work item hits a stop condition:
    a. Capture the work item state, relevant errors, and diff summary.
    b. Call `quest_rescue` with this context.
@@ -63,4 +83,4 @@ Trigger strong batch verification when ANY of the following is true:
 - Do not add new parallelism or expand scope without GPT-5.5/user approval.
 - You may make a batch more conservative (split, pause) but not more aggressive.
 - Always record telemetry: model, tokens, cost, duration, outcome, rescue usage.
-- Background implementation agents are expected to take time. Prefer returning control to the user over blocking the conversation. Check status later when the user asks, not by sleeping in-session.
+- Background implementation agents are expected to take time. Prefer returning control to the user over blocking the conversation. The `quest-batch-closeout` synthetic message will re-engage you when the Batch finishes; do not tight-poll `quest_work_item_status` in the meantime.

@@ -36,7 +36,7 @@ vi.mock('./paths.js', async () => {
 	return { ...actual, AGENTS_DIR: '/agents' };
 });
 
-vi.mock('./worktree.js', () => ({
+vi.mock('./runs/worktree.js', () => ({
 	getHeadSha: vi.fn().mockResolvedValue('basesha-deadbeef'),
 	ensureQuestBranch: vi.fn().mockResolvedValue({
 		questBranch: 'quest/q1',
@@ -51,8 +51,8 @@ vi.mock('./worktree.js', () => ({
 }));
 
 import { captureQuestBranchOnExecuting } from './commands';
-import { mergeCompletedRun, startSubagentRun, activeRuns } from './agents';
-import * as worktreeMod from './worktree';
+import { mergeCompletedRun, startSubagentRun, activeRuns } from './runs/runner';
+import * as worktreeMod from './runs/worktree';
 
 function makeChild() {
 	const child = new EventEmitter() as EventEmitter & {

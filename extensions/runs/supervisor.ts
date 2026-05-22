@@ -1,12 +1,17 @@
 /**
- * Per-run anomaly polling loop (ADR 014, M3-3).
+ * Per-run anomaly polling loop (ADR 014, M3-3; amended 2026-05-22).
  *
  * Every 30s, scan each Quest's `runs/*.json`, filter to runs with
- * `status === "running"`, and apply the three pause-tier rules:
+ * `status === "running"`, and apply the two remaining pause-tier rules:
  *
- *   - `lockfile_drift`   any tracked lockfile in the worktree diff
  *   - `unbounded_diff`   > 50 files OR > 2000 changed lines
  *   - `heartbeat_missed` last semantic `progress_beat` > 5min ago and PID alive
+ *
+ * The legacy lockfile-touch pause-tier rule was removed in the ADR 014
+ * 2026-05-22 amendment (issue #14): monorepo `bun install` correctly rewrites
+ * lockfiles when new workspace packages exist, and the supervisor was
+ * punishing legitimate Runs. Real dependency tampering now surfaces at merge
+ * time (Worktree Isolation, ADR 011) and in the Homecoming Brief narrative.
  *
  * On any pause trigger: emit `anomaly_detected` (tier: "pause", should_pause:
  * true), SIGTERM the run (5s grace → SIGKILL), flip its summary to
@@ -22,12 +27,12 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { validateEvent } from "./events.js";
-import { ensureDir, readJsonIfExists, writeJson } from "./fs-utils.js";
-import { recordRunFinished } from "./agents.js";
-import { checkLockedOutWrites } from "./handoff-compiler.js";
-import { readPlanFrontmatter, type FrontmatterValue } from "./launch-review.js";
-import type { BackgroundRunSummary } from "./types.js";
+import { validateEvent } from "../events.js";
+import { ensureDir, readJsonIfExists, writeJson } from "../fs-utils.js";
+import { recordRunFinished } from "./runner.js";
+import { checkLockedOutWrites } from "../handoff-compiler.js";
+import { readPlanFrontmatter, type FrontmatterValue } from "../launch-review.js";
+import { shouldOverwriteStatus, type BackgroundRunSummary, type RunStatus } from "./types.js";
 
 /* ================================ Constants ================================ */
 
@@ -42,14 +47,6 @@ export const UNBOUNDED_DIFF_FILES = 50;
 
 /** Per ADR 014: unbounded_diff line-count threshold. Trigger is `> N`. */
 export const UNBOUNDED_DIFF_LINES = 2000;
-
-/** Per ADR 014: lockfile names tracked by `lockfile_drift`. */
-export const LOCKFILE_NAMES = [
-	"pnpm-lock.yaml",
-	"bun.lock",
-	"yarn.lock",
-	"package-lock.json",
-];
 
 /** Grace period between SIGTERM and SIGKILL when pausing. */
 export const SIGKILL_GRACE_MS = 5_000;
@@ -81,14 +78,6 @@ export function parseShortStat(line: string): ShortStat {
 	};
 }
 
-export function checkLockfileDrift(
-	touchedFiles: string[],
-): { tripped: boolean; lockfiles: string[] } {
-	const tracked = new Set(LOCKFILE_NAMES);
-	const hits = touchedFiles.filter((p) => tracked.has(path.basename(p)));
-	return { tripped: hits.length > 0, lockfiles: hits };
-}
-
 export function checkUnboundedDiff(
 	stat: ShortStat,
 ): { tripped: boolean; filesChanged: number; totalLines: number } {
@@ -112,7 +101,7 @@ export function checkHeartbeatMissed(input: {
 
 /* ================================ Pause action ================================ */
 
-export type PauseRule = "lockfile_drift" | "unbounded_diff" | "heartbeat_missed";
+export type PauseRule = "unbounded_diff" | "heartbeat_missed";
 
 /**
  * Execute the pause flow for a single run.
@@ -158,13 +147,19 @@ export async function pauseRun(options: {
 		grace.unref?.();
 	}
 
-	// 2. Flip the summary on disk.
+	// 2. Flip the summary on disk. Re-read first so a concurrent runner-close
+	// `cancelled` write (issue #13 race) doesn't get clobbered. The STATUS_RANK
+	// lattice has `paused > cancelled`, so paused wins legitimately; the gate
+	// exists for symmetry and so future rule additions don't bypass it.
 	const pausedAt = new Date().toISOString();
+	const disk = readJsonIfExists<BackgroundRunSummary>(summary.statusPath);
+	const currentStatus: RunStatus = disk?.status ?? summary.status;
+	if (!shouldOverwriteStatus(currentStatus, "paused")) return;
 	const updated: BackgroundRunSummary & {
 		paused_at?: string;
 		paused_reason?: PauseRule;
 	} = {
-		...summary,
+		...(disk ?? summary),
 		status: "paused",
 		updatedAt: pausedAt,
 		paused_at: pausedAt,
@@ -307,17 +302,8 @@ export async function pollAnomaliesOnce(options: PollOnceOptions): Promise<void>
 				touchedFiles: diffNames,
 			});
 
-			// Pause-tier rules. Rule order matches ADR 014 §3 table.
-			const lock = checkLockfileDrift(diffNames);
-			if (lock.tripped) {
-				await pauseRun({
-					cwd: options.cwd,
-					summary,
-					rule: "lockfile_drift",
-					details: { files: lock.lockfiles },
-				});
-				continue;
-			}
+			// Pause-tier rules. Rule order matches ADR 014 §3 table
+			// (post-2026-05-22 amendment — legacy lockfile rule removed).
 			const big = checkUnboundedDiff(stat);
 			if (big.tripped) {
 				await pauseRun({

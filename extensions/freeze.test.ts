@@ -33,7 +33,7 @@ import {
   handleSoftFreezeChord,
   handleHardFreezeChord,
 } from './freeze';
-import { startSubagentRun, activeRuns } from './agents';
+import { startSubagentRun, activeRuns } from './runs/runner';
 import type { BackgroundRunSummary } from './types';
 
 const cwd = '/project';

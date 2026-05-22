@@ -57,8 +57,16 @@ A **Run** whose process is no longer reachable, but whose final status was never
 _Avoid_: Stale run, dead run, zombie
 
 **Paused Run**:
-A **Run** that was SIGTERM'd by the supervisor in response to a pause-tier **Anomaly** (e.g. lockfile drift, unbounded diff, missed semantic beats). Its **Run Worktree** is preserved; the user resolves it via Discard, Force-Complete, or Resume.
+A **Run** that was SIGTERM'd by the supervisor in response to a pause-tier **Anomaly** (`unbounded_diff` or `heartbeat_missed`). Its **Run Worktree** is preserved; the user resolves it via Discard, Force-Complete, or Resume. The status-precedence lattice (`paused > cancelled > failed > completed > running`) guarantees a Paused Run stays `paused` even when the runner's close handler races to write `cancelled`.
 _Avoid_: Halted run, suspended run, stopped run
+
+**Batch**:
+A group of **Runs** the **Execution Orchestrator** launches together. Each `quest_run_work_item` call in the Batch shares the same Orchestrator-assigned `batchId` and declares the total `batchSize`. The supervisor watches the Batch for completion; when every Run reaches a terminal status, a **Batch Closeout** fires.
+_Avoid_: Wave, group, parallel block
+
+**Batch Closeout**:
+A hidden synthetic message (`customType: "quest-batch-closeout"`, `display: false`, `triggerTurn: true`) delivered to the **Execution Orchestrator** when every **Run** in a **Batch** reaches a terminal status in the same pi session. The payload carries per-Run `{ workItemId, runId, status, reportPath, anomalyTier?, anomalyRule?, lastBeatPhase? }`. The Orchestrator reads each report and decides retry / rescue / advance without user input. A durable `batch_closeout` event in `telemetry/events.jsonl` records every fire with `delivered: true | false`. Cross-session Batches are handled by the **Homecoming Brief**, not by a delayed Closeout. Resume (ADR 017) reuses the pipeline as a Batch-of-1.
+_Avoid_: Notification, callback, completion event
 
 **Progress Beat**:
 A periodic event emitted from a **Run** that describes its current phase. Two flavours: a **semantic** beat (rich `phase`/`confidence`/`note`, emitted by the agent via the `quest_progress_beat` tool) and a **synthetic** beat (`phase: "alive"`, emitted by the parent supervisor when explicit beats have been silent for ~60s and the process is still reachable). The **Widget** reads beats to render liveness; the supervisor watches gaps between beats to detect anomalies.
@@ -69,7 +77,7 @@ A judgment call made silently by an autonomous **Run** without asking the user �
 _Avoid_: Assumption, decision (unqualified), shortcut
 
 **Anomaly**:
-A supervisor-detected condition during a **Run** that warrants attention. Classified into three tiers: **pause** (SIGTERM the run, creating a **Paused Run**; user resolves), **halt** (stop a specific quest-level operation such as a merge; other runs continue), and **log-only** (append event; no action; surface at homecoming). Each `anomaly_detected` event carries its tier and the rule that triggered it.
+A supervisor-detected condition during a **Run** that warrants attention. Classified into three tiers: **pause** (SIGTERM the run, creating a **Paused Run**; user resolves) — currently `unbounded_diff` and `heartbeat_missed`; **halt** (stop a specific quest-level operation such as a merge; other runs continue) — currently `merge_conflict` and `batch_size_drift`; **log-only** (append event; no action; surface at homecoming) — `out_of_scope_write` and `locked_out_write`. Each `anomaly_detected` event carries its tier and the rule that triggered it.
 _Avoid_: Error, exception, alert (unqualified)
 
 **Base SHA**:
@@ -111,6 +119,7 @@ _Avoid_: Walkthrough (unqualified), interview, checklist
 - A **Quest** produces multiple **Artifacts** across its lifecycle
 - An **Implementation Plan** breaks a **Quest** into multiple **Work Items**
 - Each **Work Item** may have zero or more **Runs**
+- A **Batch** groups one or more **Runs** launched together by the Execution Orchestrator; the supervisor delivers exactly one **Batch Closeout** per Batch when all member Runs terminate in-session
 - The **Widget** displays exactly one **Quest** (the active one)
 - The **Dashboard** displays all **Quests** and lets the user inspect any of them
 

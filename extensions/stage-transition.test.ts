@@ -8,7 +8,7 @@ vi.mock('node:fs', async () => {
   return { default: fs, ...fs };
 });
 
-vi.mock('./worktree.js', () => ({
+vi.mock('./runs/worktree.js', () => ({
   getHeadSha: vi.fn().mockResolvedValue('basesha-deadbeef'),
   ensureQuestBranch: vi.fn().mockResolvedValue({ questBranch: 'quest/q1', created: true }),
 }));
@@ -182,7 +182,7 @@ describe('transitionStage', () => {
 
   describe('rejection: quest_branch_capture_failed', () => {
     it('returns rejected when ensureQuestBranch throws', async () => {
-      const worktree = await import('./worktree.js');
+      const worktree = await import('./runs/worktree.js');
       (worktree.ensureQuestBranch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error('not a git repo'),
       );
@@ -207,7 +207,7 @@ describe('transitionStage', () => {
     });
 
     it('does not persist the new status when capture fails', async () => {
-      const worktree = await import('./worktree.js');
+      const worktree = await import('./runs/worktree.js');
       (worktree.ensureQuestBranch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error('boom'),
       );

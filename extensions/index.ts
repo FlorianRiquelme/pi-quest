@@ -43,8 +43,9 @@ import {
 	renderResultQuestRunWorkItem,
 	renderResultQuestWorkItemStatus,
 } from "./tools.js";
-import { reapOrphanedRuns, reapOrphanWorktrees, startLivenessSupervisor } from "./agents.js";
-import { startAnomalyPoller } from "./anomaly-poller.js";
+import { reapOrphanedRuns, reapOrphanWorktrees, startLivenessSupervisor } from "./runs/runner.js";
+import { startAnomalyPoller } from "./runs/supervisor.js";
+import { startCloseoutWatcher } from "./runs/watcher.js";
 import { handleHardFreezeChord, handleSoftFreezeChord, isSoftFrozen } from "./freeze.js";
 import type { FreezeContext } from "./freeze.js";
 import { engageSkillFactory } from "./skill-engagement.js";
@@ -215,11 +216,25 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "quest_run_work_item",
 		label: "Run Quest Work Item",
-		description: "Start an implementation subagent for a single Quest work item in the background.",
-		promptSnippet: "Start a quest work item implementation subagent without blocking the orchestrator",
+		description:
+			"Start an implementation subagent for a single Quest work item in the background. " +
+			"Per ADR 018: every call must pass batchId (Orchestrator-assigned grouping ID, " +
+			"same on every call in the Batch) and batchSize (the total Run count the " +
+			"Orchestrator commits to launching for that batchId). For a single Run, use " +
+			"a unique batchId and batchSize=1.",
+		promptSnippet:
+			"Start a quest work item implementation subagent without blocking the orchestrator. Pass batchId + batchSize for every call (ADR 018 Batch Closeout).",
 		parameters: Type.Object({
 			questId: Type.String({ description: "Quest ID" }),
 			workItemId: Type.String({ description: "Work item ID, e.g. 001" }),
+			batchId: Type.String({
+				description:
+					"Orchestrator-assigned Batch grouping ID. Same on every call in the Batch (e.g. `batch-<questId>-<timestamp>`).",
+			}),
+			batchSize: Type.Integer({
+				minimum: 1,
+				description: "Total Run count the Orchestrator commits to launching for this batchId (≥ 1).",
+			}),
 			optionalModel: Type.Optional(Type.String({ description: "Override subagent model" })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -418,10 +433,17 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 		// ADR 010 §3: start the 60s synthetic liveness loop. The interval
 		// unrefs itself so it doesn't keep pi alive on its own.
 		startLivenessSupervisor(ctx.cwd);
-		// ADR 014: start the 30s anomaly poller (lockfile_drift, unbounded_diff,
-		// heartbeat_missed pause-tier rules + log-only locked_out_write). The
-		// interval unrefs itself so it doesn't keep pi alive.
+		// ADR 014 (amended 2026-05-22): start the 30s anomaly poller for the two
+		// remaining pause-tier rules — `unbounded_diff`, `heartbeat_missed` — plus
+		// the log-only `locked_out_write` rule. The interval unrefs itself so it
+		// doesn't keep pi alive.
 		startAnomalyPoller(ctx.cwd);
+		// ADR 018: start the Batch Closeout watcher. `extensionStartTime` is
+		// the cross-session gate — Closeouts only fire for Runs whose
+		// `completedAt >= extensionStartTime`. The Homecoming Brief (ADR 015)
+		// handles older Runs.
+		const extensionStartTime = new Date().toISOString();
+		startCloseoutWatcher(ctx.cwd, pi, extensionStartTime);
 		setQuestWidget(ctx);
 	});
 }

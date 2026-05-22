@@ -36,7 +36,7 @@ The `Run.status` enum gains `paused`, joining `running | completed | failed | ca
 
 | Rule | Trigger | Detection | Default threshold |
 |---|---|---|---|
-| `lockfile_drift` | A lockfile is modified in the run's worktree | Supervisor polls `git diff --name-only` every ~30s | Any change to `pnpm-lock.yaml`, `bun.lock`, `yarn.lock`, `package-lock.json` |
+| ~~`lockfile_drift`~~ | ~~A lockfile is modified in the run's worktree~~ | ~~Supervisor polls `git diff --name-only` every ~30s~~ | **Removed 2026-05-22 — see [Amendments](#amendments) below.** |
 | `unbounded_diff` | Cumulative diff exceeds size threshold | Supervisor polls `git diff --shortstat` every ~30s | 50 files OR 2000 lines |
 | `heartbeat_missed` | No semantic `progress_beat` for X minutes; PID alive | Track timestamp of last non-`alive`-phase beat | 5 minutes |
 
@@ -86,8 +86,27 @@ Resume requires carrying narrative across run boundaries — the same problem th
 - **M3 schema**: extend `anomaly_detected` event payload with `tier` and `should_pause` fields.
 - **M4**: design Resume mechanic with continuation context (shared design with Homecoming Brief); consider promoting `repeated_test_failure`.
 
+## Amendments
+
+### 2026-05-22 — Kill `lockfile_drift`; add `batch_size_drift` (ADR 018)
+
+The `lockfile_drift` pause-tier rule (§3) is **removed**. Issue #14: monorepo `bun install` correctly rewrites lockfiles when new workspace packages exist, and the supervisor was SIGTERM'ing legitimate Runs at the 4-minute poll. Three out of four Runs ended `cancelled`/`failed` from a single batch; the fourth completed only by racing the 30-second poll.
+
+Real dependency tampering surfaces at merge time (Worktree Isolation, ADR 011) and in the Homecoming Brief (ADR 015), where the user reviews intentionally. Historical `anomaly_detected` events with `rule: "lockfile_drift"` remain readable in old logs — `rule` is a free-form string.
+
+A new halt-tier rule joins the table:
+
+| Rule | Trigger | Action |
+|---|---|---|
+| `batch_size_drift` | A `quest_run_work_item` call declares a `batchSize` inconsistent with prior calls for the same `batchId` | Reject the tool call; surface as a halt-tier `anomaly_detected` event. Fix Orchestrator state before retrying. |
+
+`batch_size_drift` lives in ADR 018's Batch Closeout protocol — `rule` is the free-form field, no schema change needed.
+
+The pause-tier table now lists **two** rules (down from three): `unbounded_diff` and `heartbeat_missed`. `repeated_test_failure` from §5 remains deferred.
+
 ## References
 - M3 grilling session.
 - ADR 010 — Event Log (`anomaly_detected` event extended here).
 - ADR 011 — Worktree Isolation (defines log-only rules; this ADR places them in the tier model).
 - ADR 013 — Hearth Widget (paused runs trigger Needs-you mood).
+- ADR 018 — Batch Closeout Protocol (this 2026-05-22 amendment is part of it).

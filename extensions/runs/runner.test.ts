@@ -15,7 +15,7 @@ import {
 	startSubagentRun,
 	activeRuns,
 	__lastBeatAtForTests,
-} from './agents';
+} from './runner';
 import type { BackgroundRunSummary } from './types';
 
 vi.mock('node:fs', async () => {
@@ -33,7 +33,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => ({
 
 vi.mock('node:os', () => ({ tmpdir: () => '/tmp' }));
 
-vi.mock('./paths.js', () => ({
+vi.mock('../paths.js', () => ({
   AGENTS_DIR: '/agents',
 }));
 
@@ -460,6 +460,60 @@ describe('agents', () => {
       expect(spawnOpts.env.PI_QUEST_RUN_ID).toBe(summary.runId);
       // Existing env vars should still be present (e.g. PATH).
       expect(spawnOpts.env.PATH).toBe(process.env.PATH);
+    });
+
+    it('STATUS_RANK gate: finalize("cancelled") does NOT overwrite an already-paused disk row (issue #13 race)', async () => {
+      vol.mkdirSync('/agents', { recursive: true });
+      vol.mkdirSync('/tmp', { recursive: true });
+      vol.writeFileSync(
+        '/agents/quest-implementation.md',
+        '---\nname: quest-implementation\ndescription: impl\n---\nBody.',
+      );
+
+      const worktree = await import('./worktree');
+      (worktree.createRunWorktree as any).mockImplementation(
+        async ({ questId, runId, repoRoot }: any) => ({
+          worktreePath: `${repoRoot}/.pi/quests/${questId}/worktrees/${runId}`,
+          runBranch: `quest-run/${questId}/${runId}`,
+        }),
+      );
+
+      const { spawn } = await import('node:child_process');
+      const child = makeFakeChild();
+      (spawn as any).mockReturnValue(child);
+
+      const summary = await startSubagentRun({
+        cwd: '/project',
+        questId: 'q1',
+        questDir: '/project/.pi/quests/q1',
+        workItemId: '001',
+        agentName: 'quest-implementation',
+        task: 'do the thing',
+      });
+
+      // Simulate the supervisor's pauseRun: rewrite disk to `paused` while
+      // the subprocess is still alive in the runner's eyes.
+      const statusPath = summary.statusPath;
+      const onDiskPaused = {
+        ...(JSON.parse(fs.readFileSync(statusPath, 'utf-8') as string) as BackgroundRunSummary),
+        status: 'paused',
+        paused_at: new Date().toISOString(),
+        paused_reason: 'unbounded_diff',
+      };
+      fs.writeFileSync(statusPath, JSON.stringify(onDiskPaused), 'utf-8');
+
+      // Now the SIGTERM propagates and the runner's close handler fires with
+      // a signal — that path calls finalize("cancelled"). The STATUS_RANK
+      // gate must reject the downgrade.
+      child.emit('close', null, 'SIGTERM');
+
+      // Yield a microtask for any synchronous follow-ups.
+      await Promise.resolve();
+
+      const afterRunnerClose = JSON.parse(
+        fs.readFileSync(statusPath, 'utf-8') as string,
+      ) as BackgroundRunSummary;
+      expect(afterRunnerClose.status).toBe('paused');
     });
   });
 

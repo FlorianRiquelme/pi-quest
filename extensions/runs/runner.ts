@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { generateTimestampId } from "../lib.js";
+import { generateTimestampId } from "../../lib.js";
 import {
 	appendCappedTail,
 	ensureDir,
@@ -15,9 +15,9 @@ import {
 	MAX_SUBAGENT_CAPTURE_CHARS,
 	readJsonIfExists,
 	writeJson,
-} from "./fs-utils.js";
-import { validateEvent } from "./events.js";
-import { AGENTS_DIR } from "./paths.js";
+} from "../fs-utils.js";
+import { validateEvent } from "../events.js";
+import { AGENTS_DIR } from "../paths.js";
 import {
 	createRunWorktree,
 	listRunWorktrees,
@@ -25,7 +25,8 @@ import {
 	removeRunWorktree,
 	worktreePathFor,
 } from "./worktree.js";
-import type { AgentDef, BackgroundRunSummary } from "./types.js";
+import type { AgentDef } from "../types.js";
+import { shouldOverwriteStatus, type BackgroundRunSummary, type RunStatus } from "./types.js";
 
 export const MODEL_ALIASES: Record<string, string> = {
 	"kimi-2.6": "openrouter/moonshotai/kimi-k2.6",
@@ -326,6 +327,10 @@ export async function startSubagentRun(options: {
 	questBranch?: string;
 	/** Base SHA the Quest forked from. Passed through to `createRunWorktree`. */
 	baseSha?: string;
+	/** ADR 018: Orchestrator-assigned Batch grouping ID. */
+	batchId?: string;
+	/** ADR 018: declared Batch size (≥ 1) — every call in the Batch agrees. */
+	batchSize?: number;
 	onStatus?: (summary: BackgroundRunSummary) => void;
 }): Promise<BackgroundRunSummary> {
 	// M3-2: soft-freeze guard. While a soft freeze is active on the quest,
@@ -463,6 +468,8 @@ export async function startSubagentRun(options: {
 		worktreePath,
 		runBranch: worktreeResult.runBranch,
 		questBranch,
+		batchId: options.batchId,
+		batchSize: options.batchSize,
 	};
 	activeRuns.set(runId, summary);
 	writeRunSummary(summary);
@@ -488,6 +495,16 @@ export async function startSubagentRun(options: {
 			} catch {
 				/* ignore */
 			}
+		}
+		// Issue #13 secondary race: the supervisor may have already written
+		// `paused` to disk; the runner's close handler then fires with
+		// `cancelled` (because the SIGTERM closed the child). Re-read disk
+		// state and consult the STATUS_RANK lattice before overwriting.
+		const disk = readRunSummary(options.questDir, runId);
+		const currentStatus: RunStatus = disk?.status ?? summary.status;
+		if (!shouldOverwriteStatus(currentStatus, status)) {
+			activeRuns.delete(runId);
+			return;
 		}
 		const completedAt = new Date().toISOString();
 		summary.status = status;

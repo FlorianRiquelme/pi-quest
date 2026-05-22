@@ -3,7 +3,7 @@
  * ADR 017 (M4-4).
  *
  * Every event written to `.pi/quests/<id>/telemetry/events.jsonl` matches one of
- * the twelve variants below. The `event` field is the discriminator
+ * the thirteen variants below. The `event` field is the discriminator
  * (snake_case on the wire). Every variant carries `timestamp` (ISO 8601),
  * `questId`, and an optional open `details` slot for forward-compatible extras.
  *
@@ -182,6 +182,45 @@ const RunResumedEvent = Type.Object({
 	details: DetailsField,
 });
 
+// ADR 018 — Batch Closeout audit event. Emitted exactly once per Batch when
+// the in-process watcher decides the Batch is complete (all Runs terminal,
+// in-session, not already fired). The companion synthetic message
+// (`pi.sendMessage({ customType: "quest-batch-closeout", display: false, … },
+// { triggerTurn: true })`) is the user-facing effect; this event is the
+// durable audit record. `delivered` records whether the `pi.sendMessage` call
+// succeeded — used to answer "why didn't the Orchestrator advance?" from logs.
+const BatchCloseoutEvent = Type.Object({
+	event: Type.Literal("batch_closeout"),
+	timestamp: TimestampField,
+	questId: QuestIdField,
+	batchId: Type.String({
+		description: "Orchestrator-assigned grouping ID for the Batch.",
+	}),
+	batchSize: Type.Integer({
+		minimum: 1,
+		description: "Total number of Runs in this Batch (≥ 1).",
+	}),
+	runIds: Type.Array(Type.String(), {
+		description: "Run IDs whose summaries participated in the Closeout decision.",
+	}),
+	statuses: Type.Record(Type.String(), Type.String(), {
+		description: "Map from runId to terminal RunStatus.",
+	}),
+	anomalies: Type.Optional(
+		Type.Array(
+			Type.Object({
+				runId: Type.String(),
+				tier: Type.String(),
+				rule: Type.String(),
+			}),
+		),
+	),
+	delivered: Type.Boolean({
+		description: "Whether the companion pi.sendMessage call succeeded.",
+	}),
+	details: DetailsField,
+});
+
 /* ================================ Union ================================ */
 
 export const QuestEventSchema = Type.Union([
@@ -197,6 +236,7 @@ export const QuestEventSchema = Type.Union([
 	FreezeEngagedEvent,
 	FreezeReleasedEvent,
 	RunResumedEvent,
+	BatchCloseoutEvent,
 ]);
 
 export type QuestEvent = Static<typeof QuestEventSchema>;
@@ -206,7 +246,8 @@ export type QuestEvent = Static<typeof QuestEventSchema>;
  *
  * The first nine were defined by ADR 010. ADR 013 §8 (Hearth Widget freeze
  * chords) added `freeze_engaged` and `freeze_released`. ADR 017 §5 (Resume
- * mechanic) added `run_resumed`.
+ * mechanic) added `run_resumed`. ADR 018 (Batch Closeout protocol) added
+ * `batch_closeout`.
  */
 export const QUEST_EVENT_KINDS = [
 	"stage_entered",
@@ -221,6 +262,7 @@ export const QUEST_EVENT_KINDS = [
 	"freeze_engaged",
 	"freeze_released",
 	"run_resumed",
+	"batch_closeout",
 ] as const;
 
 export type QuestEventKind = (typeof QUEST_EVENT_KINDS)[number];

@@ -9,7 +9,7 @@ const ts = '2024-01-01T12:00:00.000Z';
 const questId = 'q1';
 
 describe('QUEST_EVENT_KINDS', () => {
-	it('contains the 9 kinds from ADR 010, the 2 freeze kinds from M3-2 / ADR 013, and the run_resumed kind from M4-4 / ADR 017', () => {
+	it('contains the 9 kinds from ADR 010, the 2 freeze kinds from M3-2 / ADR 013, the run_resumed kind from M4-4 / ADR 017, and the batch_closeout kind from ADR 018', () => {
 		expect([...QUEST_EVENT_KINDS].sort()).toEqual(
 			[
 				'stage_entered',
@@ -24,6 +24,7 @@ describe('QUEST_EVENT_KINDS', () => {
 				'freeze_engaged',
 				'freeze_released',
 				'run_resumed',
+				'batch_closeout',
 			].sort(),
 		);
 	});
@@ -153,7 +154,7 @@ describe('validateEvent', () => {
 				questId,
 				new_run_id: 'run-2',
 				continues_from: 'run-1',
-				acknowledgment: 'lockfile drift is intentional',
+				acknowledgment: 'diff growth is expected here',
 			},
 			{
 				event: 'run_resumed',
@@ -163,6 +164,28 @@ describe('validateEvent', () => {
 				continues_from: 'run-2',
 				acknowledgment: 'User chose to resume without comment',
 				details: { resumption_number: 2 },
+			},
+			{
+				event: 'batch_closeout',
+				timestamp: ts,
+				questId,
+				batchId: 'batch-q1-1700000000000',
+				batchSize: 2,
+				runIds: ['run-1', 'run-2'],
+				statuses: { 'run-1': 'completed', 'run-2': 'failed' },
+				delivered: true,
+			},
+			{
+				event: 'batch_closeout',
+				timestamp: ts,
+				questId,
+				batchId: 'resume-run-7',
+				batchSize: 1,
+				runIds: ['run-8'],
+				statuses: { 'run-8': 'completed' },
+				anomalies: [{ runId: 'run-8', tier: 'log', rule: 'locked_out_write' }],
+				delivered: false,
+				details: { sendError: 'pi not listening' },
 			},
 		];
 
@@ -239,6 +262,7 @@ describe('validateEvent', () => {
 			{ event: 'freeze_engaged' },
 			{ event: 'freeze_released' },
 			{ event: 'run_resumed' },
+			{ event: 'batch_closeout' },
 		];
 		for (const s of samples) covered.add(s.event);
 		for (const kind of QUEST_EVENT_KINDS) {

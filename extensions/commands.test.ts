@@ -412,6 +412,68 @@ describe('commands', () => {
         expect(gateEvent.outcome).toBe('force_passed');
         expect(gateEvent.reasons).toContain('user_forced');
       });
+
+      it('notify surfaces Quest Branch and short Base SHA on launch-review → executing (#6)', async () => {
+        // ADRs 011 + 012: the Quest Branch and Base SHA are audit anchors
+        // captured at this transition. The success notify must surface both so
+        // the user has visible confirmation at the moment they're created.
+        vol.fromJSON({
+          '/project/.pi/quests/q1/workflow.json': JSON.stringify(baseLaunchReviewWorkflow()),
+          '/project/.pi/quests/q1/IMPLEMENTATION_PLAN.md': fullPassPlan,
+        });
+        const ctx = mockCtx('/project');
+        await cmdSetStatus(ctx, ['q1', 'executing']);
+        const lastNotify = notifyCalls[notifyCalls.length - 1];
+        expect(lastNotify.msg).toContain('quest/q1');
+        // Mock returns baseSha 'basesha-deadbeef' → first 8 chars is 'basesha-'.
+        expect(lastNotify.msg).toContain('basesha-');
+        // Don't surface the full SHA — short form only.
+        expect(lastNotify.msg).not.toContain('basesha-deadbeef');
+      });
+    });
+
+    it('notify stays terse for transitions that do not create a Quest Branch (#6)', async () => {
+      // Regression guard: only transitions into `executing` capture a Quest
+      // Branch (ADR 011 §2). Transitions like `intake → blocked` MUST NOT
+      // surface fake/empty branch or SHA values.
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1', title: 'Q', status: 'intake',
+          createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+          source: {}, artifacts: { handoff: 'H.md' },
+        }),
+      });
+      const ctx = mockCtx('/project');
+      await cmdSetStatus(ctx, ['q1', 'blocked', '--force']);
+      const lastNotify = notifyCalls[notifyCalls.length - 1];
+      expect(lastNotify.msg).toContain('status → blocked');
+      expect(lastNotify.msg).not.toContain('quest/');
+      expect(lastNotify.msg).not.toContain('Base SHA');
+    });
+
+    it('notify stays terse on executing → blocked even though questBranch + baseSha are already persisted (#6)', async () => {
+      // Regression guard for Codex review: the Quest Branch and Base SHA are
+      // persisted on the workflow forever after the first entry into
+      // `executing`. The enriched notify must be gated on the *destination*
+      // status, not on the presence of the fields — otherwise every later
+      // transition would re-surface the same audit anchors even though they
+      // were not captured in that transition.
+      vol.fromJSON({
+        '/project/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1', title: 'Q', status: 'executing',
+          createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z',
+          source: {}, artifacts: { handoff: 'H.md' },
+          questBranch: 'quest/q1',
+          baseSha: 'basesha-deadbeef',
+        }),
+      });
+      const ctx = mockCtx('/project');
+      await cmdSetStatus(ctx, ['q1', 'blocked']);
+      const lastNotify = notifyCalls[notifyCalls.length - 1];
+      expect(lastNotify.msg).toContain('status → blocked');
+      expect(lastNotify.msg).not.toContain('quest/q1');
+      expect(lastNotify.msg).not.toContain('Base SHA');
+      expect(lastNotify.msg).not.toContain('basesha-');
     });
 
     it('rejects verification-ready without VERIFICATION.md', async () => {

@@ -242,8 +242,28 @@ function notifyTransitionOutcome(
 	// so the doorbell notify gets eaten by a generic status notify. When the
 	// doorbell owned the notification this turn, stay quiet.
 	if (!result.doorbellFired) {
-		ctx.ui.notify(`Quest '${questId}' status → ${newStatus}`, "info");
+		ctx.ui.notify(formatTransitionNotify(questId, newStatus, result.workflow), "info");
 	}
+}
+
+/**
+ * Compose the success notify for a stage transition. The Quest Branch and
+ * Base SHA are captured on entry to `executing` (ADRs 011 §2 + 012) and then
+ * persisted on the workflow forever. We surface them only on the transition
+ * that lands in `executing` — otherwise the same audit anchors would leak
+ * into every later notify (e.g. `executing → blocked`) even though that
+ * transition didn't capture them. Outside `executing`, stay terse.
+ */
+function formatTransitionNotify(
+	id: string,
+	newStatus: QuestStatus,
+	workflow: QuestWorkflow,
+): string {
+	const base = `Quest '${id}' status → ${newStatus}`;
+	if (newStatus !== "executing") return base;
+	const { questBranch, baseSha } = workflow;
+	if (!questBranch || !baseSha) return base;
+	return `${base}\nQuest Branch: ${questBranch} · Base SHA: ${baseSha.slice(0, 8)}`;
 }
 
 /**

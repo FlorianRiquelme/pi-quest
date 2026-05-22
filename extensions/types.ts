@@ -1,5 +1,9 @@
 /**
  * Shared local types for the pi-quest extension.
+ *
+ * Run-lifecycle types (`BackgroundRunSummary`, `RunStatus`, `STATUS_RANK`) live
+ * in `runs/types.ts` — see issue #15. They are re-exported here for callers
+ * outside `runs/` that historically imported from `./types.js`.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -26,36 +30,5 @@ export interface AgentDef {
 	systemPrompt: string;
 }
 
-export interface BackgroundRunSummary {
-	runId: string;
-	questId: string;
-	workItemId: string;
-	agentName: string;
-	status: "running" | "completed" | "failed" | "cancelled" | "orphaned" | "paused";
-	startedAt: string;
-	updatedAt: string;
-	completedAt?: string;
-	exitCode?: number;
-	pid?: number;
-	model?: string;
-	stdoutPath: string;
-	stderrPath: string;
-	reportPath: string;
-	statusPath: string;
-	/** Path to the Run Worktree where this run executed (ADR 011). */
-	worktreePath?: string;
-	/** Run Branch ref (e.g. `quest-run/<questId>/<runId>`). */
-	runBranch?: string;
-	/** Quest Branch this run targets (e.g. `quest/<questId>`). */
-	questBranch?: string;
-	/** ADR 014: when the supervisor SIGTERM'd this run on a pause-tier anomaly. */
-	paused_at?: string;
-	/** ADR 014: which pause-tier rule fired (e.g. `lockfile_drift`). */
-	paused_reason?: "lockfile_drift" | "unbounded_diff" | "heartbeat_missed";
-	/**
-	 * ADR 017: when this run was spawned by Resume, the runId of its **immediate**
-	 * predecessor (the just-paused Run). Multi-Resume chains follow this back
-	 * one hop at a time, not back to the original.
-	 */
-	continues_from?: string;
-}
+export type { BackgroundRunSummary, RunStatus } from "./runs/types.js";
+export { STATUS_RANK, shouldOverwriteStatus } from "./runs/types.js";

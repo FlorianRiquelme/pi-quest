@@ -23,7 +23,7 @@ vi.mock('./git.js', () => ({
   getCurrentCommit: vi.fn().mockResolvedValue('abc1234'),
 }));
 
-vi.mock('./worktree.js', () => ({
+vi.mock('./runs/worktree.js', () => ({
   getHeadSha: vi.fn().mockResolvedValue('basesha-deadbeef'),
   ensureQuestBranch: vi.fn().mockResolvedValue({ questBranch: 'quest/q1', created: true }),
 }));
@@ -661,7 +661,7 @@ describe('commands', () => {
         '---\n\n# Plan\n';
 
       it('records baseSha and creates Quest Branch on first entry to executing', async () => {
-        const worktree = await import('./worktree.js');
+        const worktree = await import('./runs/worktree.js');
         (worktree.getHeadSha as any).mockResolvedValue('basesha-deadbeef');
         (worktree.ensureQuestBranch as any).mockResolvedValue({
           questBranch: 'quest/q1',
@@ -700,7 +700,7 @@ describe('commands', () => {
       });
 
       it('is idempotent — second entry to executing does not re-capture baseSha', async () => {
-        const worktree = await import('./worktree.js');
+        const worktree = await import('./runs/worktree.js');
         (worktree.getHeadSha as any).mockClear();
         (worktree.ensureQuestBranch as any).mockClear();
 

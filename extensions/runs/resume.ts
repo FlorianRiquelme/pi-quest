@@ -24,15 +24,15 @@ import { spawn as defaultSpawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { generateTimestampId } from "../lib.js";
+import { generateTimestampId } from "../../lib.js";
 import {
 	getAgentDef,
 	normalizeModel,
 	writePromptToTempFile,
 	writeRunSummary,
-} from "./agents.js";
-import { validateEvent } from "./events.js";
-import { ensureDir, getPiInvocation, readJsonIfExists } from "./fs-utils.js";
+} from "./runner.js";
+import { validateEvent } from "../events.js";
+import { ensureDir, getPiInvocation, readJsonIfExists } from "../fs-utils.js";
 import type { BackgroundRunSummary } from "./types.js";
 
 /* ================================ Continuation packet ================================ */

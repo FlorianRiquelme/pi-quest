@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { QuestWorkflow, QuestStatus } from "../../lib.js";
-import { listRunSummaries } from "../agents.js";
+import { listRunSummaries } from "../runs/runner.js";
 import type { QuestEvent } from "../events.js";
 import { questDirPath } from "../paths.js";
 import { getAllQuestIds, loadCurrentState, loadQuestWorkflow } from "../state.js";

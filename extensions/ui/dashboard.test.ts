@@ -7,7 +7,7 @@ vi.mock('node:fs', async () => {
   return { default: fs, ...fs };
 });
 
-vi.mock('../worktree.js', () => ({
+vi.mock('../runs/worktree.js', () => ({
   removeRunWorktree: vi.fn().mockResolvedValue(undefined),
   mergeRunBranchIntoQuest: vi.fn().mockResolvedValue({ ok: true }),
 }));
@@ -169,7 +169,7 @@ describe('QuestDashboard', () => {
       dashboard.setVisibleRows(40);
       dashboard.render(120);
 
-      const worktree = await import('../worktree.js');
+      const worktree = await import('../runs/worktree.js');
       (worktree.removeRunWorktree as any).mockClear();
       await dashboard.discardSelectedPausedRun();
 
@@ -187,7 +187,7 @@ describe('QuestDashboard', () => {
       dashboard.setVisibleRows(40);
       dashboard.render(120);
 
-      const worktree = await import('../worktree.js');
+      const worktree = await import('../runs/worktree.js');
       (worktree.mergeRunBranchIntoQuest as any).mockClear().mockResolvedValue({ ok: true });
       (worktree.removeRunWorktree as any).mockClear();
 

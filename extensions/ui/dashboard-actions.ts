@@ -22,8 +22,8 @@ import * as path from "node:path";
 
 import { validateEvent } from "./../events.js";
 import { ensureDir, readJsonIfExists, writeJson } from "./../fs-utils.js";
-import { resumeRun } from "./../resume.js";
-import { mergeRunBranchIntoQuest, removeRunWorktree } from "./../worktree.js";
+import { resumeRun } from "./../runs/resume.js";
+import { mergeRunBranchIntoQuest, removeRunWorktree } from "./../runs/worktree.js";
 import type { BackgroundRunSummary } from "./../types.js";
 
 interface ActionOptions {

@@ -51,9 +51,9 @@ describe('composeContinuationPacket', () => {
 			newRunId: 'r-new',
 			chainLength: 1,
 			pausedAt: '2026-05-19T17:25:00.000Z',
-			pausedReason: 'lockfile_drift',
+			pausedReason: 'unbounded_diff',
 			anomalyDetails: { files: ['pnpm-lock.yaml'] },
-			acknowledgment: 'lockfile drift is intentional',
+			acknowledgment: 'diff growth is expected here',
 			lastFiveBeats: [
 				{ timestamp: '2026-05-19T17:10:00.000Z', phase: 'reading-docs', note: 'reviewed PRD' },
 				{ timestamp: '2026-05-19T17:15:00.000Z', phase: 'implementing', note: 'started edits' },
@@ -80,9 +80,9 @@ describe('composeContinuationPacket', () => {
 	it('renders the Anomaly + acknowledgment section', () => {
 		const out = composeContinuationPacket(baseInput());
 		expect(out).toContain('### 2. Anomaly + user acknowledgment');
-		expect(out).toContain('lockfile_drift');
+		expect(out).toContain('unbounded_diff');
 		expect(out).toContain('pnpm-lock.yaml');
-		expect(out).toContain('> lockfile drift is intentional');
+		expect(out).toContain('> diff growth is expected here');
 	});
 
 	it('defaults empty acknowledgment to the fallback text', () => {
@@ -171,7 +171,7 @@ function seedPausedRun(overrides: Partial<BackgroundRunSummary> = {}): Backgroun
 		startedAt: '2026-05-19T17:00:00.000Z',
 		updatedAt: '2026-05-19T17:25:00.000Z',
 		paused_at: '2026-05-19T17:25:00.000Z',
-		paused_reason: 'lockfile_drift',
+		paused_reason: 'unbounded_diff',
 		stdoutPath: `/project/.pi/quests/q1/runs/${runId}.stdout.log`,
 		stderrPath: `/project/.pi/quests/q1/runs/${runId}.stderr.log`,
 		reportPath: '/project/.pi/quests/q1/reports/001.md',

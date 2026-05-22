@@ -21,7 +21,7 @@ import {
 	recordSemanticBeat,
 	runSubagent,
 	startSubagentRun,
-} from "./agents.js";
+} from "./runs/runner.js";
 import { validateEvent } from "./events.js";
 import { transitionStage } from "./stage-transition.js";
 import type { EngageSkill } from "./skill-engagement.js";

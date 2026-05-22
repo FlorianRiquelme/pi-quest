@@ -43,8 +43,8 @@ import {
 	renderResultQuestRunWorkItem,
 	renderResultQuestWorkItemStatus,
 } from "./tools.js";
-import { reapOrphanedRuns, reapOrphanWorktrees, startLivenessSupervisor } from "./agents.js";
-import { startAnomalyPoller } from "./anomaly-poller.js";
+import { reapOrphanedRuns, reapOrphanWorktrees, startLivenessSupervisor } from "./runs/runner.js";
+import { startAnomalyPoller } from "./runs/supervisor.js";
 import { handleHardFreezeChord, handleSoftFreezeChord, isSoftFrozen } from "./freeze.js";
 import type { FreezeContext } from "./freeze.js";
 import { engageSkillFactory } from "./skill-engagement.js";
@@ -418,9 +418,10 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 		// ADR 010 §3: start the 60s synthetic liveness loop. The interval
 		// unrefs itself so it doesn't keep pi alive on its own.
 		startLivenessSupervisor(ctx.cwd);
-		// ADR 014: start the 30s anomaly poller (lockfile_drift, unbounded_diff,
-		// heartbeat_missed pause-tier rules + log-only locked_out_write). The
-		// interval unrefs itself so it doesn't keep pi alive.
+		// ADR 014 (amended 2026-05-22): start the 30s anomaly poller for the two
+		// remaining pause-tier rules — `unbounded_diff`, `heartbeat_missed` — plus
+		// the log-only `locked_out_write` rule. The interval unrefs itself so it
+		// doesn't keep pi alive.
 		startAnomalyPoller(ctx.cwd);
 		setQuestWidget(ctx);
 	});

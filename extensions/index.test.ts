@@ -31,7 +31,7 @@ vi.mock('@earendil-works/pi-ai', () => ({
   StringEnum: (values: readonly string[]) => ({ type: 'string', enum: [...values] }),
 }));
 
-vi.mock('./worktree.js', () => ({
+vi.mock('./runs/worktree.js', () => ({
   getHeadSha: vi.fn().mockResolvedValue('basesha-deadbeef'),
   ensureQuestBranch: vi
     .fn()
@@ -827,7 +827,7 @@ describe('piQuestExtension', () => {
       });
 
       // Reset the in-memory last-beat map so the test is hermetic.
-      const { __lastBeatAtForTests } = await import('./agents');
+      const { __lastBeatAtForTests } = await import('./runs/runner');
       __lastBeatAtForTests.clear();
 
       piQuestExtension(mockPi as any);
@@ -871,7 +871,7 @@ describe('piQuestExtension', () => {
       vol.fromJSON({
         '/project/.pi/quests/q1/workflow.json': workflowJSON(),
       });
-      const { __lastBeatAtForTests } = await import('./agents');
+      const { __lastBeatAtForTests } = await import('./runs/runner');
       __lastBeatAtForTests.clear();
 
       piQuestExtension(mockPi as any);

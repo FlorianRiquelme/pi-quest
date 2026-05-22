@@ -15,7 +15,7 @@ import {
 } from "../lib.js";
 import { ensureDir } from "./fs-utils.js";
 import { getCurrentBranch, getCurrentCommit } from "./git.js";
-import { ensureQuestBranch, getHeadSha } from "./worktree.js";
+import { ensureQuestBranch, getHeadSha } from "./runs/worktree.js";
 import {
 	evaluateLaunchGate,
 	readPlanFrontmatter,
@@ -31,7 +31,7 @@ import {
 	generateHomecomingBrief,
 	type NarrativeSpawnInput,
 } from "./homecoming-brief.js";
-import { runSubagent } from "./agents.js";
+import { runSubagent } from "./runs/runner.js";
 import { transitionStage, type StageTransitionResult } from "./stage-transition.js";
 import type { EngageSkill } from "./skill-engagement.js";
 

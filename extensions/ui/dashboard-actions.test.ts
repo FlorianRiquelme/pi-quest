@@ -14,12 +14,12 @@ vi.mock("node:fs", async () => {
 	return { default: fs, ...fs };
 });
 
-vi.mock("../worktree.js", () => ({
+vi.mock("../runs/worktree.js", () => ({
 	removeRunWorktree: vi.fn().mockResolvedValue(undefined),
 	mergeRunBranchIntoQuest: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
-vi.mock("../resume.js", () => ({
+vi.mock("../runs/resume.js", () => ({
 	resumeRun: vi.fn().mockResolvedValue({
 		newRunId: 'new-run-id',
 		worktreePath: '/project/.pi/quests/q1/worktrees/r-paused',
@@ -38,7 +38,7 @@ function seedPausedRun(): BackgroundRunSummary {
 		startedAt: "2026-05-19T12:00:00.000Z",
 		updatedAt: "2026-05-19T12:30:00.000Z",
 		paused_at: "2026-05-19T12:30:00.000Z",
-		paused_reason: "lockfile_drift",
+		paused_reason: "unbounded_diff",
 		stdoutPath: "/x",
 		stderrPath: "/y",
 		reportPath: "/z",
@@ -58,14 +58,14 @@ function seedPausedRun(): BackgroundRunSummary {
 describe("discardRun", () => {
 	beforeEach(async () => {
 		vol.reset();
-		const worktree = await import("../worktree.js");
+		const worktree = await import("../runs/worktree.js");
 		(worktree.removeRunWorktree as any).mockClear().mockResolvedValue(undefined);
 		(worktree.mergeRunBranchIntoQuest as any).mockClear();
 	});
 
 	it("removes the worktree and marks the run cancelled", async () => {
 		seedPausedRun();
-		const worktree = await import("../worktree.js");
+		const worktree = await import("../runs/worktree.js");
 		await discardRun({ cwd: "/project", questId: "q1", runId: "r-paused" });
 
 		expect(worktree.removeRunWorktree).toHaveBeenCalledWith(
@@ -81,7 +81,7 @@ describe("discardRun", () => {
 	});
 
 	it("is a no-op when the run summary is missing", async () => {
-		const worktree = await import("../worktree.js");
+		const worktree = await import("../runs/worktree.js");
 		vol.mkdirSync("/project/.pi/quests/q1/runs", { recursive: true });
 		await expect(
 			discardRun({ cwd: "/project", questId: "q1", runId: "missing" }),
@@ -119,14 +119,14 @@ describe("discardRun", () => {
 describe("forceCompleteRun", () => {
 	beforeEach(async () => {
 		vol.reset();
-		const worktree = await import("../worktree.js");
+		const worktree = await import("../runs/worktree.js");
 		(worktree.removeRunWorktree as any).mockClear().mockResolvedValue(undefined);
 		(worktree.mergeRunBranchIntoQuest as any).mockClear().mockResolvedValue({ ok: true });
 	});
 
 	it("merges the run branch and marks the run completed", async () => {
 		seedPausedRun();
-		const worktree = await import("../worktree.js");
+		const worktree = await import("../runs/worktree.js");
 
 		await forceCompleteRun({ cwd: "/project", questId: "q1", runId: "r-paused" });
 
@@ -148,7 +148,7 @@ describe("forceCompleteRun", () => {
 
 	it("leaves the run status as paused on merge conflict and emits anomaly", async () => {
 		seedPausedRun();
-		const worktree = await import("../worktree.js");
+		const worktree = await import("../runs/worktree.js");
 		(worktree.mergeRunBranchIntoQuest as any).mockResolvedValue({
 			ok: false,
 			conflict: "CONFLICT (content): src/a.ts",
@@ -186,7 +186,7 @@ describe("forceCompleteRun", () => {
 			startedAt: "2026-05-19T12:00:00.000Z",
 			updatedAt: "2026-05-19T12:30:00.000Z",
 			paused_at: "2026-05-19T12:30:00.000Z",
-			paused_reason: "lockfile_drift",
+			paused_reason: "unbounded_diff",
 			stdoutPath: "/x",
 			stderrPath: "/y",
 			reportPath: "/z",
@@ -236,7 +236,7 @@ describe("forceCompleteRun", () => {
 describe("resumeRunAction", () => {
 	beforeEach(async () => {
 		vol.reset();
-		const resumeMod = await import("../resume.js");
+		const resumeMod = await import("../runs/resume.js");
 		(resumeMod.resumeRun as any).mockClear().mockResolvedValue({
 			newRunId: 'new-run-id',
 			worktreePath: '/project/.pi/quests/q1/worktrees/r-paused',
@@ -247,7 +247,7 @@ describe("resumeRunAction", () => {
 
 	it("calls resumeRun with the supplied acknowledgment", async () => {
 		seedPausedRun();
-		const resumeMod = await import("../resume.js");
+		const resumeMod = await import("../runs/resume.js");
 		await resumeRunAction({
 			cwd: "/project",
 			questId: "q1",
@@ -264,7 +264,7 @@ describe("resumeRunAction", () => {
 
 	it("passes an empty acknowledgment through unchanged (default text is applied inside resumeRun)", async () => {
 		seedPausedRun();
-		const resumeMod = await import("../resume.js");
+		const resumeMod = await import("../runs/resume.js");
 		await resumeRunAction({
 			cwd: "/project",
 			questId: "q1",

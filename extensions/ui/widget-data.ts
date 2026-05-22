@@ -11,7 +11,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { questDirPath } from '../paths.js';
 import { loadCurrentState, loadQuestWorkflow } from '../state.js';
-import { listRunSummaries } from '../agents.js';
+import { listRunSummaries } from '../runs/runner.js';
 import { readQuestEvents } from './data.js';
 import { computeWall, computeCompute, shouldShowClocks } from './two-clocks.js';
 import type { WidgetSnapshot } from './widget-cache.js';

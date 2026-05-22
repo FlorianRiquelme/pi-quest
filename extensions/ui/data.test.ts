@@ -199,7 +199,7 @@ describe('UI data layer', () => {
         runId: 'r4', questId: 'active-quest', workItemId: '004',
         agentName: 'quest-implementation', status: 'paused',
         startedAt: '2026-05-19T17:10:00.000Z', updatedAt: '2026-05-19T17:30:00.000Z',
-        paused_at: '2026-05-19T17:30:00.000Z', paused_reason: 'lockfile_drift',
+        paused_at: '2026-05-19T17:30:00.000Z', paused_reason: 'unbounded_diff',
         stdoutPath: '/dev/null', stderrPath: '/dev/null',
         reportPath: '/dev/null', statusPath: '/dev/null',
       }));
@@ -224,8 +224,8 @@ describe('UI data layer', () => {
     });
 
     it('handles missing paused_at by omitting the timer', () => {
-      expect(formatPausedRunLabel(undefined, 'lockfile_drift', Date.now())).toBe(
-        'Paused: lockfile_drift',
+      expect(formatPausedRunLabel(undefined, 'unbounded_diff', Date.now())).toBe(
+        'Paused: unbounded_diff',
       );
     });
 

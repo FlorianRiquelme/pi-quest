@@ -442,6 +442,98 @@ describe('homecoming-brief', () => {
       expect(result.briefPath).toBeUndefined();
       expect(result.content).toBe('');
     });
+
+    it('integrates an in-flight Batch across a pi restart (ADR 018 cross-session gate, story 20)', async () => {
+      // Scenario: a 3-Run Batch was launched, two completed and one was paused
+      // by the supervisor, then pi was closed. On reopen, no Closeout fires
+      // (cross-session gate in extensions/runs/closeout.ts suppresses it) — the
+      // Brief is the canonical narrative for what happened. Assert the Brief
+      // counts the Batch's runs correctly and surfaces the paused-Run anomaly.
+      vol.fromJSON({
+        '/repo/.pi/quests/q1/workflow.json': JSON.stringify({
+          id: 'q1',
+          title: 'In-Flight Quest',
+          status: 'executing',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T01:00:00Z',
+          source: {},
+          artifacts: { handoff: 'HANDOFF.md', brief: 'BRIEF.md' },
+          baseSha: 'abc1234deadbeef',
+          questBranch: 'quest/q1',
+        }),
+        '/repo/.pi/quests/q1/runs/run-a.json': JSON.stringify({
+          runId: 'run-a',
+          status: 'completed',
+          workItemId: '001',
+          batchId: 'batch-q1-1700000000',
+          batchSize: 3,
+          completedAt: '2026-01-01T00:30:00Z',
+          statusPath: '/repo/.pi/quests/q1/runs/run-a.json',
+        }),
+        '/repo/.pi/quests/q1/runs/run-b.json': JSON.stringify({
+          runId: 'run-b',
+          status: 'completed',
+          workItemId: '002',
+          batchId: 'batch-q1-1700000000',
+          batchSize: 3,
+          completedAt: '2026-01-01T00:45:00Z',
+          statusPath: '/repo/.pi/quests/q1/runs/run-b.json',
+        }),
+        '/repo/.pi/quests/q1/runs/run-c.json': JSON.stringify({
+          runId: 'run-c',
+          status: 'paused',
+          workItemId: '003',
+          batchId: 'batch-q1-1700000000',
+          batchSize: 3,
+          paused_reason: 'unbounded_diff',
+          statusPath: '/repo/.pi/quests/q1/runs/run-c.json',
+        }),
+        '/repo/.pi/quests/q1/telemetry/events.jsonl':
+          [
+            {
+              event: 'stage_entered',
+              timestamp: '2026-01-01T00:00:00Z',
+              questId: 'q1',
+              to: 'executing',
+            },
+            {
+              event: 'anomaly_detected',
+              timestamp: '2026-01-01T00:50:00Z',
+              questId: 'q1',
+              runId: 'run-c',
+              tier: 'pause',
+              rule: 'unbounded_diff',
+              should_pause: true,
+              details: { files: 73, lines: 2841 },
+            },
+          ]
+            .map((e) => JSON.stringify(e))
+            .join('\n') + '\n',
+      });
+
+      const result = await generateHomecomingBrief({
+        repoRoot: '/repo',
+        questId: 'q1',
+        spawnNarrativeAgent: async () => 'Two Runs completed, one paused on unbounded_diff. Inspect run-c before resuming.',
+        gitStats: async () => ({ filesChanged: 12, linesAdded: 340, linesRemoved: 20, commits: 4 }),
+        now: () => new Date('2026-01-01T02:00:00Z').getTime(),
+      });
+
+      // Title bar reflects 2/3 completed — the paused Run is not counted as completed.
+      expect(result.content).toContain('2/3');
+
+      // Anomalies section surfaces the paused-Run's pause-tier anomaly so the
+      // user can act on it via Discard / Force-Complete / Resume.
+      expect(result.content).toContain('## Anomalies');
+      expect(result.content).toContain('[pause] unbounded_diff');
+
+      // No batch_closeout event was emitted (cross-session gate) — the Brief
+      // owns the cross-session narrative.
+      const events = (vol.readFileSync('/repo/.pi/quests/q1/telemetry/events.jsonl', 'utf-8') as string)
+        .split('\n')
+        .filter((l) => l.trim().length > 0);
+      expect(events.some((l) => l.includes('"batch_closeout"'))).toBe(false);
+    });
   });
 
   describe('AUTONOMOUS_TO_INTERACTIVE_TRIGGERS', () => {

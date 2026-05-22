@@ -47,6 +47,7 @@ import { reapOrphanedRuns, reapOrphanWorktrees, startLivenessSupervisor } from "
 import { startAnomalyPoller } from "./anomaly-poller.js";
 import { handleHardFreezeChord, handleSoftFreezeChord, isSoftFrozen } from "./freeze.js";
 import type { FreezeContext } from "./freeze.js";
+import { engageSkillFactory } from "./skill-engagement.js";
 import { setQuestWidget } from "./ui/widget.js";
 
 /**
@@ -91,6 +92,10 @@ export function tokenizeQuestArgs(args: string): string[] {
 }
 
 export default function piQuestExtension(pi: ExtensionAPI) {
+	// Bound once at registration so all stage-routing call sites engage skills
+	// through the same pi instance (issue #4 / friction-elimination).
+	const engageSkill = engageSkillFactory(pi);
+
 	/* ================================ Commands ================================ */
 
 	pi.registerCommand("quest", {
@@ -106,7 +111,7 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 				case "":
 					// Auto-router (ADR 008): try to advance the active quest. If no
 					// stage was advanced, fall back to the status display.
-					if (!(await tryAutoRoute(ctx))) {
+					if (!(await tryAutoRoute(ctx, engageSkill))) {
 						await showStatus(ctx);
 					} else {
 						setQuestWidget(ctx);
@@ -141,7 +146,7 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 					await cmdDashboard(ctx);
 					break;
 				case "set-status":
-					await cmdSetStatus(ctx, parts.slice(1));
+					await cmdSetStatus(ctx, parts.slice(1), engageSkill);
 					break;
 				case "freeze":
 					// Slash-command fallback alias for the Alt+P chord (ADR 013 §8).
@@ -283,7 +288,7 @@ export default function piQuestExtension(pi: ExtensionAPI) {
 			force: Type.Optional(Type.Boolean({ default: false })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			return executeQuestWriteWorkflow(params, ctx);
+			return executeQuestWriteWorkflow(params, ctx, engageSkill);
 		},
 	});
 

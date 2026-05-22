@@ -33,6 +33,7 @@ import {
 } from "./homecoming-brief.js";
 import { runSubagent } from "./agents.js";
 import { transitionStage, type StageTransitionResult } from "./stage-transition.js";
+import type { EngageSkill } from "./skill-engagement.js";
 
 /* ================================ Homecoming Brief (M4-1 / ADR 015) ================================ */
 
@@ -211,14 +212,18 @@ export async function cmdSelect(ctx: CommandContext, args: string[]) {
 	ctx.ui.notify(`Active quest set to '${id}'`, "info");
 }
 
-export async function cmdSetStatus(ctx: CommandContext, args: string[]) {
+export async function cmdSetStatus(
+	ctx: CommandContext,
+	args: string[],
+	engageSkill?: EngageSkill,
+) {
 	const [id, newStatus] = args;
 	if (!id || !newStatus) {
 		ctx.ui.notify("Usage: /quest set-status <id> <status> [--force]", "warning");
 		return;
 	}
 	const force = args.includes("--force");
-	const result = await transitionStage(ctx, id, newStatus as QuestStatus, { force });
+	const result = await transitionStage(ctx, id, newStatus as QuestStatus, { force }, engageSkill);
 	notifyTransitionOutcome(ctx, id, newStatus as QuestStatus, result);
 }
 
@@ -342,7 +347,10 @@ export function fireUatDoorbell(
  * `lastSeenEventTimestamp[questId]`. If yes, regenerates and displays the
  * Homecoming Brief, then advances the pointer.
  */
-export async function tryAutoRoute(ctx: CommandContext): Promise<boolean> {
+export async function tryAutoRoute(
+	ctx: CommandContext,
+	engageSkill?: EngageSkill,
+): Promise<boolean> {
 	const state = loadCurrentState(ctx.cwd);
 	if (!state.currentQuestId) return false;
 	const questId = state.currentQuestId;
@@ -356,11 +364,14 @@ export async function tryAutoRoute(ctx: CommandContext): Promise<boolean> {
 		workflow.updatedAt = new Date().toISOString();
 		saveQuestWorkflow(questDir, workflow);
 		emitStageEntered(questDir, questId, previousStatus, workflow.status);
-		ctx.ui.notify(
-			`Quest '${workflow.id}' entering Launch Review.\n` +
-				`The Launch Review skill is loaded inline. Walk through Compiler diagnostics, Blast Radius, and Pre-Mortem, then Accept — the skill auto-transitions to executing once the Launch Gate passes. \`/quest set-status ${workflow.id} executing --force\` remains as an escape hatch.`,
-			"info",
-		);
+		const engaged = engageSkill ? await engageSkill("quest-launch-review") : false;
+		if (!engaged) {
+			ctx.ui.notify(
+				`Quest '${workflow.id}' entering Launch Review.\n` +
+					`Run \`/skill:quest-launch-review\` to begin the Trust Trinity walkthrough. Accept inside the skill auto-transitions to executing once the Launch Gate passes; \`/quest set-status ${workflow.id} executing --force\` remains as an escape hatch.`,
+				"info",
+			);
+		}
 		return true;
 	}
 

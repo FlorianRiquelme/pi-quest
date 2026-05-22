@@ -24,6 +24,7 @@ import {
 } from "./agents.js";
 import { validateEvent } from "./events.js";
 import { transitionStage } from "./stage-transition.js";
+import type { EngageSkill } from "./skill-engagement.js";
 import type { BackgroundRunSummary, ToolContext } from "./types.js";
 
 /* ================================ Theme helpers ================================ */
@@ -344,6 +345,7 @@ export interface QuestWriteWorkflowParams {
 export async function executeQuestWriteWorkflow(
 	params: QuestWriteWorkflowParams,
 	ctx: ToolContext,
+	engageSkill?: EngageSkill,
 ) {
 	const questDir = questDirPath(ctx.cwd, params.questId);
 	const workflow = loadQuestWorkflow(questDir);
@@ -368,6 +370,7 @@ export async function executeQuestWriteWorkflow(
 			params.questId,
 			params.status as QuestStatus,
 			{ force: !!params.force },
+			engageSkill,
 		);
 		if (result.outcome === "rejected") {
 			const suffix = result.reason === "quest_not_found" ? "" : " Use force=true to override.";

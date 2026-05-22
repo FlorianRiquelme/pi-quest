@@ -74,6 +74,12 @@ describe('piQuestExtension', () => {
     on: vi.fn((event: string, handler: any) => {
       eventHandlers[event] = handler;
     }),
+    // Issue #4: engageSkill is wired in via engageSkillFactory(pi), which calls
+    // these at engagement time. The factory closure is built at extension
+    // registration, so even tests that don't drive an interactive-stage entry
+    // need the methods present.
+    getCommands: vi.fn(() => [] as Array<{ name: string; source: string; sourceInfo: { path: string; baseDir?: string } }>),
+    sendUserMessage: vi.fn(),
   };
 
   beforeEach(() => {

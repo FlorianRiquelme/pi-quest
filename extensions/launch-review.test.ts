@@ -51,7 +51,32 @@ describe('launch-review skill (M2-2 content)', () => {
     // Mentions the in-place pre-mortem edit flow + edits ledger.
     expect(content).toContain('pre_mortem_edits');
     // Mentions the helpers the skill uses.
-    expect(content).toMatch(/recordLaunchReviewSignOff|recordPreMortemEdit|recordAcknowledgedWarning/);
+    expect(content).toMatch(/recordLaunchReviewSignOff|recordPreMortemEdit|recordAcknowledgedWarning|acceptLaunchReview/);
+  });
+});
+
+describe('launch-review skill (issue #3 — Accept auto-transitions)', () => {
+  it('SKILL.md tells the skill to call acceptLaunchReview on Accept, not the user to type /quest set-status executing', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const skillPath = path.resolve(__dirname, '..', 'skills', 'launch-review', 'SKILL.md');
+    const content = realFs.readFileSync(skillPath, 'utf-8');
+
+    // The skill must reference the new helper that combines sign-off + transition.
+    expect(content).toContain('acceptLaunchReview');
+
+    // The skill must NOT tell the user to type the manual transition command
+    // after sign-off. The --force escape hatch reference stays (separate section).
+    const lines = content.split('\n');
+    const manualInstructionLines = lines.filter(
+      (l) =>
+        l.includes('/quest set-status') &&
+        l.includes('executing') &&
+        !l.includes('--force'),
+    );
+    expect(manualInstructionLines).toEqual([]);
+
+    // The --force escape hatch must still be documented.
+    expect(content).toContain('--force');
   });
 });
 

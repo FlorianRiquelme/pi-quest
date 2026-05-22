@@ -152,20 +152,20 @@ recordPreMortemEdit(planPath, {
 
 This updates `pre_mortem.<field>` and appends `{ at, who, field, before, after }` to the top-level `pre_mortem_edits:` array. The Launch Gate does not inspect `pre_mortem_edits`, but it is part of the audit trail.
 
-### Sign-off
+### Accept
 
 When all three sections have been walked through, every error is gone, every warning is acknowledged, and the user signals acceptance, call:
 
 ```ts
-import { recordLaunchReviewSignOff } from "pi-quest/extensions/launch-review";
-recordLaunchReviewSignOff(planPath);
+import { acceptLaunchReview } from "pi-quest/extensions/commands";
+const result = await acceptLaunchReview(ctx, "<quest-id>", planPath);
 ```
 
-(`planPath` is the value returned by `resolveActiveQuestPlanPath` at the start of the skill.) This writes `launch_review.signed_off_at` (ISO 8601) and `launch_review.signed_off_by: user` without touching `acknowledged_warnings`.
+(`planPath` is the value returned by `resolveActiveQuestPlanPath` at the start of the skill.) `acceptLaunchReview` writes `launch_review.signed_off_at` (ISO 8601) and `launch_review.signed_off_by: user` (without touching `acknowledged_warnings`), then runs the same `transitionStage` path the user would have invoked manually. The Launch Gate verifies the four conditions (`blast_radius`, `pre_mortem`, no `severity: error` in `compiler_diagnostics`, sign-off present) and emits a `launch_gate` event.
 
-After sign-off, instruct the user to run `/quest set-status <currentQuestId> executing` (substitute the active quest's ID — also visible via `/quest status`).
-
-The Launch Gate verifies the four conditions (`blast_radius`, `pre_mortem`, no `severity: error` in `compiler_diagnostics`, sign-off present) and emits a `launch_gate` event. If the gate blocks, fix the missing piece and retry.
+Two outcomes, one notify each:
+- **Gate passes** — quest moves to `executing`, the user sees a single info notify.
+- **Gate blocks** — quest stays at `launch-review`, the reasons (e.g. `missing_blast_radius`) surface inline as an error notify. Fix the missing piece and call `acceptLaunchReview` again.
 
 ## Cancel path
 
